@@ -1,20 +1,19 @@
 # Solana Sniper
-##### The lips of wisdom are closed, except to the ears of Understanding
 
-** this is a fork of rust-websocket-server
+##### The lips of wisdom are closed, except to the ears of Understanding
 
 To monitor the market effectively using the Solana JSON RPC API combined with WebSocket data, we focus on endpoints that provide real-time or near-real-time information about transactions, account balances, and the overall state of the blockchain.
 
-Here are some of the most relevant endpoints for market monitoring purposes:
+[https://solana.com/es/docs/rpc](RTFM!!)Here are some of the most relevant endpoints for market monitoring purposes:
 
 1. getLatestBlockhash
-   Purpose: Fetches the latest block hash along with its validity period. Essential for ensuring transactions are recent and will be accepted by the network.
-2. getProgramAccounts --> ** WE USE THIS TO DETERMINE HOLDERS **
-   Purpose: Retrieves all accounts owned by a specific program, useful for monitoring smart contracts, especially DeFi protocols, and NFT collections.
+   - Purpose: Fetches the latest block hash along with its validity period. Essential for ensuring transactions are recent and will be accepted by the network.
+2. getProgramAccounts --> **WE USE THIS TO DETERMINE HOLDERS**
+   - Purpose: Retrieves all accounts owned by a specific program, useful for monitoring smart contracts, especially DeFi protocols, and NFT collections.
 3. getSignaturesForAddress
-   Purpose: Returns the signatures of transactions that involve a specific account. This is crucial for tracking transactions related to specific tokens or wallets, providing insights into market activity.
+   - Purpose: Returns the signatures of transactions that involve a specific account. This is crucial for tracking transactions related to specific tokens or wallets, providing insights into market activity.
 4. getTransaction
-   Purpose: Fetches a confirmed transaction by its signature. Vital for analyzing transaction details, including participants, token amounts, and more.
+   - Purpose: Fetches a confirmed transaction by its signature. Vital for analyzing transaction details, including participants, token amounts, and more.
 5. getAccountInfo
    Purpose: Retrieves information about a specific account, including its current balance and owner program. This can be used to monitor the balances of key accounts, such as token treasuries or large holders.
 6. getTokenAccountBalance
@@ -64,9 +63,11 @@ Here are some of the most relevant endpoints for market monitoring purposes:
 - These operations primarily indicate active engagement with tokens on the blockchain.
 - While Token Transfers and Minting reflect ongoing economic activity, Account Initialization can be a stronger signal of new users entering the ecosystem, as it involves setting up new token accounts which could belong to new or existing users expanding their holdings.
 
+ ** this is a fork of rust-websocket-server
 
 
 
+----------------------------------------------------
 
 ## Journal -- Solana Moonshot Holders
 5/03/24 3am
