@@ -1,0 +1,55 @@
+[package]
+name = "rust-websocket-server"
+version = "0.1.0"
+edition = "2021"
+authors = ["Julian Martin Irigoyen <martinirigoyenj17@gmail.com>"]
+description = "Websocket Server for PolygonIO - extendable to whatever you want. "
+license = "MIT"
+repository = "git@github.com:JulianIrigoyen/rust-websocket-server.git"
+readme = "README.md"
+keywords = ["web", "websocket", "async", "polygon", "crypto", "web3", "rust"]
+categories = ["web-programming", "asynchronous",  "crypto", "web3", "finance", "trading", "data"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# Flexible concrete Error Reporting type built on std::error::Error with customizable Reports
+eyre = "0.6"
+# low-latency cyclic dataflow computational model, which allows for the development of streaming data processing and iterative computations. This crate provides a framework for writing programs that can process data as it arrives and can also iterate over data for algorithms that refine results over time.
+timely = "0.12"
+# runtime for writing reliable, asynchronous, and slim applications with the Rust programming language. It is built on the async/await syntax for asynchronous programming. The features specified (full, io-util, sync, rt-multi-thread) enable various utilities for I/O, synchronization primitives, and multi-threaded runtime support.
+tokio = { version = "1", features = ["full", "io-util", "sync", "rt-multi-thread", "macros"] }
+# Rust implementation of the WebSocket protocol. This crate provides the core WebSocket capabilities used by tokio-tungstenite for both synchronous and asynchronous networking code.
+tungstenite = "0.21.0"
+# asynchronous WebSocket client and server library built on top of Tokio. It uses Tungstenite for WebSocket protocol support and provides async/await APIs for WebSocket communication. The native-tls feature enables TLS support for secure WebSocket connections.
+tokio-tungstenite = { version = "*", features = ["native-tls"] }
+# safe, extensible ORM and query builder for Rust. Diesel allows you to interact with databases in a Rustacean way, focusing on safety and expressiveness. The postgres feature enables support for the PostgreSQL database
+diesel = { version = "2.1.4", features = ["postgres", "r2d2", "serde_json"] }
+r2d2 = "0.8.9"
+
+
+uuid = { version = "1.7.0", features = ["v4", "fast-rng", "macro-diagnostics"]}
+
+#  framework for serializing and deserializing Rust data structures efficiently and generically. The derive feature enables the use of derive macros (Serialize, Deserialize) to automatically implement the serialization and deserialization code for custom data structures.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_derive = "1.0"
+
+log = "0.4.17"
+# provides utilities for working with futures and async programming in Rust. It's part of the futures ecosystem, which is foundational for asynchronous programming in Rust with futures and async/await.
+futures-util = { version = "0.3.28", default-features = false, features = ["sink", "std"] }
+#Provides URL parsing and manipulation with the Rust type system. This crate is useful for working with web and network programming, allowing you to construct, parse, and manipulate URLs.
+url = "2.5.0"
+# Provides multi-producer, multi-consumer channels for message passing. This crate offers a more flexible, powerful alternative to the standard library's mpsc with additional features like select! for waiting on multiple channels. We use this to feed data from the websockets into timely dataflows.
+crossbeam-channel = "0.5"
+#Loads environment variables from a .env file into the process's environment variables.
+dotenv = "0.15.0"
+dotenv_codegen = "0.15.0"
+actix-web = "4.0"
+
+
+reqwest = { version = "0.11.24", features = ["json", "blocking"] }
+async-trait = "0.1.77"
+lazy_static = "1.4.0"
+solana-client = "1.18.3"
+solana-sdk = "1.18.3"
