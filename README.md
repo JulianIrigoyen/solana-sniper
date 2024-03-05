@@ -1,4 +1,5 @@
-# The lips of wisdom are closed, except to the ears of Understanding
+# Solana Sniper
+##### The lips of wisdom are closed, except to the ears of Understanding
 
 ** this is a fork of rust-websocket-server
 
