@@ -9,7 +9,7 @@ Here are some of the most relevant endpoints for market monitoring purposes:
 
 1. getLatestBlockhash
    Purpose: Fetches the latest block hash along with its validity period. Essential for ensuring transactions are recent and will be accepted by the network.
-2. getProgramAccounts
+2. getProgramAccounts --> ** WE USE THIS TO DETERMINE HOLDERS **
    Purpose: Retrieves all accounts owned by a specific program, useful for monitoring smart contracts, especially DeFi protocols, and NFT collections.
 3. getSignaturesForAddress
    Purpose: Returns the signatures of transactions that involve a specific account. This is crucial for tracking transactions related to specific tokens or wallets, providing insights into market activity.
