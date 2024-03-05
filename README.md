@@ -4,7 +4,7 @@
 
 To monitor the market effectively using the Solana JSON RPC API combined with WebSocket data, we focus on endpoints that provide real-time or near-real-time information about transactions, account balances, and the overall state of the blockchain.
 
-[https://solana.com/es/docs/rpc](RTFM!!)Here are some of the most relevant endpoints for market monitoring purposes:
+[RTFM!!]((https://solana.com/es/docs/rpc))Here are some of the most relevant endpoints for market monitoring purposes:
 
 1. getLatestBlockhash
    - Purpose: Fetches the latest block hash along with its validity period. Essential for ensuring transactions are recent and will be accepted by the network.
