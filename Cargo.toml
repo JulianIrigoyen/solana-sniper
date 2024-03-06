@@ -1,11 +1,11 @@
 [package]
-name = "rust-websocket-server"
+name = "solana-sniper"
 version = "0.1.0"
 edition = "2021"
 authors = ["Julian Martin Irigoyen <martinirigoyenj17@gmail.com>"]
 description = "Websocket Server for PolygonIO - extendable to whatever you want. "
 license = "MIT"
-repository = "git@github.com:JulianIrigoyen/rust-websocket-server.git"
+repository = "git@github.com:JulianIrigoyen/solana-sniper.git"
 readme = "README.md"
 keywords = ["web", "websocket", "async", "polygon", "crypto", "web3", "rust"]
 categories = ["web-programming", "asynchronous",  "crypto", "web3", "finance", "trading", "data"]
@@ -53,3 +53,6 @@ async-trait = "0.1.77"
 lazy_static = "1.4.0"
 solana-client = "1.18.3"
 solana-sdk = "1.18.3"
+rust_decimal = "1.0"
+hashbrown = "0.14.3" # or use std::collections::HashMap
+csv = "1.1"

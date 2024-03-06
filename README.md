@@ -2,6 +2,91 @@
 
 ** this is a fork of rust-websocket-server
 
+
+## Features: 
+
+1. Finds new meme coin launches on the solana blockchain. 
+2. Snipes!
+
+
+### Run
+
+You will need to install [Rust](https://doc.rust-lang.org/book/ch01-01-installation.html) and [Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html).
+Pull the repo, cd into it and run: 
+
+1. `cargo build`
+2. `cargo run`
+
+This app uses Actix to expose an HTTP server, which you can test by making a request to `http://localhost:8080/api/holders` with the following body: 
+```json
+{
+    "token_mint_addresses":["DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"] 
+}
+```
+This will return the current amount of **$BONK** holders, being `DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263` BONK's MINT address. 
+
+###### Journal -- Solana Meme coin Holders
+5/03/24 3am
+```json
+
+
+$RETARDIO
+Finding holders for [
+"6ogzHhzdrQr9Pgv6hZ2MNze7UrzBMAFyBBWUYp1Fhitx",
+]
+Initialized Accounts: 9444 -> 9710 (5/03/24 12pm) -> 9880  (18pm)
+Holder Accounts: 4227 -> 4219 -> 4243
+Holder Ratio: 0.45 -> 0.43 -> 0.43
+
+
+$WIF
+Finding holders for [
+"EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+]
+Initialized Accounts: 152290 -> 162359 (5/03/24 18pm)
+Holder Accounts: 63722 -> 68563 
+Holder Ratio: 0.42 -> 0.42
+
+$BONK
+Finding holders for [
+"DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+]
+Initialized Accounts: 1075109
+Holder Accounts: 645636
+Holder Ratio: 0.60
+
+$MII
+Finding holders for [
+"6yaVaoVREVoTt5euoSFpsxLEia1JnzM6fqZj6UWFok1F",
+]
+Initialized Accounts: 1142 (5/03/24 18pm)
+Holder Accounts: 319
+Holder Ratio: 0.28
+
+$PIP 
+Finding holders for [
+"EEfuxw7vmtoqG3EWzJAo6Txb5z1ci5wvMw2wrHwdQSq1",
+]
+Initialized Accounts: 5089 (5/03/24 20:20 pm)
+Holder Accounts: 2863
+Holder Ratio: 0.56
+
+$BABY
+Finding holders for [
+"5hmf8Jt9puwoqiFQTb3vr22732ZTKYRLRw9Vo7tN3rcz",
+]
+Initialized Accounts: 3550 (5/03/24 20:20 pm)
+Holder Accounts: 1981
+Holder Ratio: 0.56
+
+```
+
+
+
+
+
+
+##### Research
 To monitor the market effectively using the Solana JSON RPC API combined with WebSocket data, we focus on endpoints that provide real-time or near-real-time information about transactions, account balances, and the overall state of the blockchain.
 
 Here are some of the most relevant endpoints for market monitoring purposes:
@@ -27,7 +112,18 @@ Here are some of the most relevant endpoints for market monitoring purposes:
 10. getSlotLeader
     Purpose: Identifies the current slot leader, which is the validator node responsible for producing blocks in the current slot. This can provide insights into network dynamics and validator performance.
 
-# Combining with WebSocket Data:
+## Strategy
+
+### Identifying and Monitoring Top Traders
+- Use getSignaturesForAddress and getTransaction to track the activities of known wallets associated with top traders. 
+    - By setting alerts on transactions from these wallets, you can quickly react to their moves, assuming their actions might signal market movements.
+
+### Token Holder Analysis for Decentralization and Whale Tracking
+- Utilize getTokenAccountsByOwner and related RPC calls to analyze the distribution of token holdings.
+- A decentralized distribution is generally a healthy indicator, suggesting a broad base of support and less risk of manipulation.
+- Concentration in a few accounts (whales) can signify potential price manipulation or that a few players have significant control over the token's market movements.
+
+#### Combining with WebSocket Data:
 
 1. [accountSubscribe](https://solana.com/es/docs/rpc/websocket/logssubscribe): Monitor changes to specific accounts in real-time, such as token balances changing.
 2. [logsSubscribe](https://solana.com/es/docs/rpc/websocket/logssubscribe): Get real-time streaming of transaction logs, useful for live monitoring of contract interactions.
@@ -36,13 +132,13 @@ Here are some of the most relevant endpoints for market monitoring purposes:
 5. [programSubscribe](https://solana.com/es/docs/rpc/websocket/programsubscribe): Subscribe to a program to receive notifications when the lamports or data for an account owned by the given program changes
 
 
-## Analyzing Block Data
+#### Analyzing Block Data
 - Transaction Flow => crucial for detecting trends, understanding market dynamics, or identifying significant transfers that could affect market conditions or signal specific activities like large trades or transfers related to known wallets.
 
-## Analyzing Account Data
+#### Analyzing Account Data
 - This is how we track whales :). But we need to find the whales first.
 
-## Analyzing Log Data
+#### Analyzing Log Data
 
 - Token Management Operations:
   Token Transfers: Direct transfer of tokens between accounts, a fundamental operation in any token ecosystem.
@@ -55,7 +151,7 @@ Here are some of the most relevant endpoints for market monitoring purposes:
 
 
 
-## Filtering Token Management Operations
+#### Filtering Token Management Operations
 - Token Transfers: Look for transactions that involve the Transfer or TransferChecked instruction of the SPL Token program (TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA).
   These instructions indicate the movement of tokens between accounts.
 - Minting: Identify transactions that call the MintTo instruction of the SPL Token program, which is used to mint new tokens to a specific account.
@@ -66,31 +162,36 @@ Here are some of the most relevant endpoints for market monitoring purposes:
 
 
 
+#### Volume Analysis
 
-## Journal -- Solana Moonshot Holders
-5/03/24 3am
-
-RETARDIO
-Finding holders for [
-"6ogzHhzdrQr9Pgv6hZ2MNze7UrzBMAFyBBWUYp1Fhitx",
-]
-Initialized Accounts: 9444
-Holder Accounts: 4227
-Holder Ratio: 0.45
+- Historically: Sudden spikes or drops in volume can indicate increased interest or disengagement from the market, respectively. 
+- Momentarily: An unexpected increase in volume might signal an upcoming price movement, giving you the chance to enter or exit trades ahead of the curve.
 
 
-WIF
-Finding holders for [
-"EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
-]
-Initialized Accounts: 152290
-Holder Accounts: 63722
-Holder Ratio: 0.42
+#### Liquidity Analysis
+Liquidity refers to how easily an asset can be bought or sold in the market without affecting its price. 
+- High liquidity means large quantities of the token can be traded relatively quickly and with minimal price impact. 
+- Low liquidity means that even small trades can lead to significant price changes.
 
-BONK
-Finding holders for [
-"DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-]
-Initialized Accounts: 1075109
-Holder Accounts: 645636
-Holder Ratio: 0.60
+High vs. Low Liquidity:
+- High Liquidity: Preferred for scalping as it allows for quick entry and exit at predictable prices.
+- Low Liquidity: Can lead to slippage (the difference between the expected price of a trade and the price at which the trade is executed), making it harder to execute large orders without impacting the price.
+
+
+#### FDV (Fully Diluted Valuation) Analysis
+Fully Diluted Valuation refers to the valuation of a token if all its future supply were issued and at current market prices.
+It's calculated by multiplying the total maximum supply of the token by its current price.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
