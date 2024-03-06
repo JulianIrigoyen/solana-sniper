@@ -1,4 +1,4 @@
-use std::error::Error;
+use actix_web::web::block;
 use actix_web::{web, HttpResponse, Responder};
 use reqwest::{Client, header};
 use serde::{Serialize, Deserialize};
@@ -8,13 +8,16 @@ use rust_decimal::{prelude::FromPrimitive, Decimal};
 
 use lazy_static::lazy_static;
 use hashbrown::HashMap;
+use std::os::macos::fs;
 use std::sync::Mutex;
 
 use std::{env, thread};
 
+use chrono::Local;
 use csv::Writer;
+use std::fs::File;
 use std::fs::create_dir_all;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::error::Error;
 
 
@@ -175,13 +178,21 @@ async fn get_largest_accounts_for_mints(mint_addresses: Vec<String>) -> Result<V
                     });
                 }
             } else {
-                eprintln!("Error fetching data for mint address: {}", mint_address);
+                println!("Error fetching data for mint address: {}", mint_address);
             }
         }
     }
 
     println!("ALL THE WHALES FOR {:#?}: {:#?}", &mint_addresses, all_whales);
 
+    if let Some(a) = mint_addresses.get(0) {
+        let result = write_whales_to_csv(a, &all_whales).await;
+        if let Err(error) = result {
+            println!("Failed to write whale details to CSV: {:#?}", error);
+        }
+    } else {
+        println!("No mint addresses found.");
+    }
     Ok(all_whales)
 }
 
@@ -217,4 +228,27 @@ async fn get_token_supply(client: &Client, mint_address: &str) -> Result<TokenSu
             Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
         },
     }
+}
+
+async fn write_whales_to_csv(program_address: &str, whales: &[WhaleDetail]) -> Result<(), Box<dyn Error>> {
+    let date = Local::now().format("%Y-%m-%d").to_string();
+    let dir_path = PathBuf::from(format!("data/{}/{}/whales", program_address, date));
+    
+    // Ensure the directory exists
+    std::fs::create_dir_all(&dir_path)?;
+
+    let file_path = dir_path.join("whale_details.csv");
+    // Handle the Result returned by File::create using `?` to propagate errors
+    let file = File::create(&file_path)?;
+    let mut wtr = Writer::from_writer(file);
+
+    for whale in whales {
+        // Here, `serialize` writes each whale detail to the CSV.
+        // If an error occurs, it will be converted to Box<dyn Error> and returned
+        wtr.serialize(whale)?;
+    }
+
+    // Explicitly handle flush to ensure data is written
+    wtr.flush()?;
+    Ok(())
 }
