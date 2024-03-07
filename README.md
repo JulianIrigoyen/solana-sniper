@@ -185,14 +185,10 @@ Here are some of the most relevant endpoints for market monitoring purposes:
 
 
 #### Liquidity Analysis
-Liquidity refers to how easily an asset can be bought or sold in the market without affecting its price. 
-- High liquidity means large quantities of the token can be traded relatively quickly and with minimal price impact. 
-- Low liquidity means that even small trades can lead to significant price changes.
-
-High vs. Low Liquidity:
-- High Liquidity: Preferred for scalping as it allows for quick entry and exit at predictable prices.
-- Low Liquidity: Can lead to slippage (the difference between the expected price of a trade and the price at which the trade is executed), making it harder to execute large orders without impacting the price.
-
+Liquidity refers to how easily an asset can be bought or sold in the market without affecting its price. In the context of Solana and DeFi, it refers to the total value of the token/SOL available in the liquidity pool.=
+- HIGH LIQUIDITY IS A SIGNAL OF A HEALTHIER MARKET, because the market can sustain more operations with out affecting the price. SO:
+    - High liquidity means large quantities of the token can be traded relatively quickly and with minimal price impact. 
+    - Low liquidity means that even small trades can lead to significant price changes.
 
 #### FDV (Fully Diluted Valuation) Analysis
 Fully Diluted Valuation refers to the valuation of a token if all its future supply were issued and at current market prices.
