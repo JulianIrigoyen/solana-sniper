@@ -9,7 +9,7 @@ use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use solana_sdk::bs58;
 use rust_decimal::{prelude::FromPrimitive, Decimal};
-use rust_decimal::prelude::Zero;
+use rust_decimal::prelude::{One, Zero};
 use crate::server::endpoints::holders;
 
 use crate::server::endpoints::whales::get_token_supply;
@@ -42,6 +42,22 @@ struct HolderCategories {
     whale: usize,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct CategoryDetail {
+    holders: usize,
+    max_supply_percentage: f64,
+    token_amount_range: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct HolderDetailedStats {
+    mint_address: String,
+    token_supply: Option<Decimal>,
+    initialized_accounts: usize,
+    holder_accounts: usize,
+    holder_ratio: f64,
+    categories: HashMap<String, CategoryDetail>,
+}
 async fn find_holders(request: web::Json<FindHoldersRequest>) -> impl Responder {
     let holder_stats = process_mint_addresses(request.token_mint_addresses.clone()).await;
     match holder_stats {
@@ -50,9 +66,9 @@ async fn find_holders(request: web::Json<FindHoldersRequest>) -> impl Responder 
     }
 }
 
-async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<Vec<HolderStats>, Box<dyn Error>> {
+async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<Vec<HolderDetailedStats>, Box<dyn Error>> {
     println!("Finding holders for {:#?}", mint_addresses);
-    let mut results: Vec<HolderStats> = Vec::new();
+    let mut results: Vec<HolderDetailedStats> = Vec::new();
     let client = Client::new();
 
     for mint_address in mint_addresses {
@@ -114,7 +130,7 @@ async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<Vec<Holde
             match serde_json::from_str::<SolanaRpcResponse>(&response_text) {
                 Ok(response_json) => {
                     let initialized_count = response_json.result.len();
-                    let mut categories = HolderCategories {
+                    let mut holder_category_count = HolderCategories {
                         micro: 0,
                         small: 0,
                         medium: 0,
@@ -144,31 +160,81 @@ async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<Vec<Holde
 
                         // Category assignment based on the percentage of total supply
                         match percentage_of_total_supply {
-                            _ if percentage_of_total_supply > Decimal::from_f64(1.0).unwrap() => categories.whale += 1,
-                            _ if percentage_of_total_supply > Decimal::from_f64(0.1).unwrap() => categories.major += 1,
-                            _ if percentage_of_total_supply > Decimal::from_f64(0.05).unwrap() => categories.large += 1,
-                            _ if percentage_of_total_supply > Decimal::from_f64(0.01).unwrap() => categories.medium += 1,
-                            _ if percentage_of_total_supply > Decimal::from_f64(0.001).unwrap() => categories.small += 1,
-                            _ if percentage_of_total_supply <= Decimal::from_f64(0.0001).unwrap() => categories.micro += 1,
+                            _ if percentage_of_total_supply > Decimal::from_f64(1.0).unwrap() => holder_category_count.whale += 1,
+                            _ if percentage_of_total_supply > Decimal::from_f64(0.1).unwrap() => holder_category_count.major += 1,
+                            _ if percentage_of_total_supply > Decimal::from_f64(0.05).unwrap() => holder_category_count.large += 1,
+                            _ if percentage_of_total_supply > Decimal::from_f64(0.01).unwrap() => holder_category_count.medium += 1,
+                            _ if percentage_of_total_supply > Decimal::from_f64(0.001).unwrap() => holder_category_count.small += 1,
+                            _ if percentage_of_total_supply <= Decimal::from_f64(0.0001).unwrap() => holder_category_count.micro += 1,
                             _ => (), // Handle unexpected cases
                         };
                     });
 
-// Now, calculate holder_ratio based on non-empty wallets
+                    let mut category_detail: HashMap<String, CategoryDetail>;
+
+                    if let Some(supply) = supply {
+                        category_detail = HashMap::from([
+                            ("micro".to_string(), CategoryDetail {
+                                holders: holder_category_count.micro,
+                                max_supply_percentage: 0.0001,
+                                token_amount_range: format!("{:.0} - {:.0} tokens",
+                                                            Decimal::zero(),
+                                                            supply * Decimal::from_f64(0.000001).unwrap()),
+                            }),
+                            ("small".to_string(), CategoryDetail {
+                                holders: holder_category_count.small,
+                                max_supply_percentage: 0.01,
+                                token_amount_range: format!("{:.0} - {:.0} tokens",
+                                                            supply * Decimal::from_f64(0.00001).unwrap() + Decimal::one(),
+                                                            supply * Decimal::from_f64(0.0001).unwrap()),
+                            }),
+                            ("medium".to_string(), CategoryDetail {
+                                holders: holder_category_count.medium,
+                                max_supply_percentage: 0.05,
+                                token_amount_range: format!("{:.0} - {:.0} tokens",
+                                                            supply * Decimal::from_f64(0.0001).unwrap(),
+                                                            supply * Decimal::from_f64(0.001).unwrap() - Decimal::one()),
+                            }),
+                            ("large".to_string(), CategoryDetail {
+                                holders: holder_category_count.large,
+                                max_supply_percentage: 0.1,
+                                token_amount_range: format!("{:.0} - {:.0} tokens",
+                                                            supply * Decimal::from_f64(0.001).unwrap(),
+                                                            supply * Decimal::from_f64(0.01).unwrap() - Decimal::one()),
+                            }),
+                            ("major".to_string(), CategoryDetail {
+                                holders: holder_category_count.major,
+                                max_supply_percentage: 1.0,
+                                token_amount_range: format!("{:.0} - {:.0} tokens",
+                                                            supply * Decimal::from_f64(0.01).unwrap(),
+                                                            supply * Decimal::from_f64(0.1).unwrap() - Decimal::one()),
+                            }),
+                            ("whale".to_string(), CategoryDetail {
+                                holders: holder_category_count.whale,
+                                max_supply_percentage: 50.0, // This is an example; adjust based on your definitions
+                                token_amount_range: format!(">{:.0} tokens",
+                                                            supply * Decimal::from_f64(0.1).unwrap()),
+                            }),
+                        ]);
+                    } else {
+                        category_detail = HashMap::new()
+                    }
+
+
+                    // Now, calculate holder_ratio based on non-empty wallets
                     let holder_ratio = if initialized_count.clone() > 0 {
                         non_empty_wallet_count.clone() as f64 / initialized_count.clone() as f64
                     } else {
                         0.0 // Avoid division by zero
                     };
 
-
-                    let stats = HolderStats {
+                    let stats = HolderDetailedStats {
                         mint_address: mint_address.clone(),
                         token_supply: Some(supply.unwrap_or(Decimal::zero())),
                         initialized_accounts: initialized_count,
                         holder_accounts: non_empty_wallet_count,
                         holder_ratio: holder_ratio,
-                        categories: Option::from(categories),
+                        categories: category_detail,
                     };
                     println!("{:#?}", stats);
                     results.push(stats);

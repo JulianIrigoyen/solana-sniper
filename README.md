@@ -23,7 +23,15 @@ This app uses Actix to expose an HTTP server, which you can test by making a req
     "token_mint_addresses":["DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"] 
 }
 ```
-This will return the current amount of **$BONK** holders, being `DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263` BONK's MINT address. 
+
+Now that we can quickly get a sense of a new token's distribution (and whales), we can add confidence to our analysis by checking if they are listed in
+(since we are using Solana):
+- Jupiter
+- Raydium
+- 
+
+
+
 
 ###### Journal -- Solana Meme coin Holders
 5/03/24 3am
