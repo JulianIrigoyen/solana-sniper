@@ -110,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ws_port = env::var("WS_SERVER_PORT").expect("WS_PORT must be set");
     let ws_server_task = tokio::spawn(async move {
         let ws_server = ws_server::WebSocketServer::new(ws_host, ws_port);
-        ws_server.run().await
+        // ws_server.run().await
     });
 
     let solana_ws_url = String::from("wss://api.mainnet-beta.solana.com");

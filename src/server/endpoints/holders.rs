@@ -1,10 +1,18 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::str::FromStr;
 use actix_web::{web, HttpResponse, Responder};
+use diesel::serialize::IsNull::No;
+use log::Level::Debug;
 use reqwest::{Client, header};
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use solana_sdk::bs58;
+use rust_decimal::{prelude::FromPrimitive, Decimal};
+use rust_decimal::prelude::Zero;
+use crate::server::endpoints::holders;
+
+use crate::server::endpoints::whales::get_token_supply;
 
 
 pub fn init_routes(cfg: &mut web::ServiceConfig) {
@@ -14,21 +22,51 @@ pub fn init_routes(cfg: &mut web::ServiceConfig) {
     );
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct HolderStats {
+    mint_address: String,
+    token_supply: Option<Decimal>,
+    initialized_accounts: usize,
+    holder_accounts: usize,
+    holder_ratio: f64,
+    categories: Option<HolderCategories>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct HolderCategories {
+    micro: usize,
+    small: usize,
+    medium: usize,
+    large: usize,
+    major: usize,
+    whale: usize,
+}
+
 async fn find_holders(request: web::Json<FindHoldersRequest>) -> impl Responder {
-    let holders_data = process_mint_addresses(request.token_mint_addresses.clone()).await;
-    match holders_data {
+    let holder_stats = process_mint_addresses(request.token_mint_addresses.clone()).await;
+    match holder_stats {
         Ok(data) => HttpResponse::Ok().json(data),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }
 
-async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<HashMap<String, usize>, Box<dyn Error>> {
+async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<Vec<HolderStats>, Box<dyn Error>> {
     println!("Finding holders for {:#?}", mint_addresses);
-    let mut holders_count = HashMap::new();
+    let mut results: Vec<HolderStats> = Vec::new();
     let client = Client::new();
 
     for mint_address in mint_addresses {
         let mint_address_base58 = bs58::encode(&mint_address).into_string();
+
+        let token_supply_result = get_token_supply(&client, mint_address.as_str()).await;
+        let supply: Option<Decimal> = if let Ok(token_supply) = token_supply_result {
+            Some(Decimal::from_f64(token_supply.ui_amount).unwrap_or_else(|| Decimal::zero()))
+        } else {
+            None
+        };
+        println!("GOT TOKEN SUPPLY ::: {:#?}", supply);
+
+
         let params = json!([
             "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
             {
@@ -66,40 +104,74 @@ async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<HashMap<S
             .await?;
 
         if response.status().is_success() {
-
             let response_text = response.text().await?;
 
             // TODO most useful print ever
-            //let value: serde_json::Value = serde_json::from_str(&response_text)?;
+            //let value: se
+            // rde_json::Value = serde_json::from_str(&response_text)?;
             // println!("{:#?}", value);
 
             match serde_json::from_str::<SolanaRpcResponse>(&response_text) {
                 Ok(response_json) => {
                     let initialized_count = response_json.result.len();
+                    let mut categories = HolderCategories {
+                        micro: 0,
+                        small: 0,
+                        medium: 0,
+                        large: 0,
+                        major: 0,
+                        whale: 0,
+                    };
 
-                    let holder_count = response_json.result.iter()
-                        .filter(|account| {
-                            account.account.data.parsed.info.token_amount
-                                .as_ref()
-                                .map_or(false, |amount| amount.ui_amount > 0.0)
-                        })
-                        .count();
 
-                    holders_count.insert(mint_address.clone(), holder_count.clone());
+                    let mut non_empty_wallet_count = 0; // Track wallets with more than 0 tokens
 
-                    // Calculate the ratio of holder accounts to initialized accounts
-                    let holder_ratio = if initialized_count > 0 {
-                        holder_count.clone() as f64 / initialized_count as f64
+                    response_json.result.iter().for_each(|account| {
+                        let ui_amount = account.account.data.parsed.info.token_amount
+                            .as_ref()
+                            .map_or(0.0, |token_amount| token_amount.ui_amount);
+
+                        if ui_amount > 0.0 {
+                            non_empty_wallet_count += 1; // Only increment for non-empty wallets
+                        }
+
+                        let ui_amount_decimal = Decimal::from_f64(ui_amount).unwrap_or(Decimal::zero());
+
+                        let percentage_of_total_supply = supply
+                            .map(|s| if !s.is_zero() { (ui_amount_decimal / s) * Decimal::from(100) } else { Decimal::zero() })
+                            .unwrap_or(Decimal::zero())
+                            .round_dp(4); // Ensure rounding for clarity
+
+                        // Category assignment based on the percentage of total supply
+                        match percentage_of_total_supply {
+                            _ if percentage_of_total_supply > Decimal::from_f64(1.0).unwrap() => categories.whale += 1,
+                            _ if percentage_of_total_supply > Decimal::from_f64(0.1).unwrap() => categories.major += 1,
+                            _ if percentage_of_total_supply > Decimal::from_f64(0.05).unwrap() => categories.large += 1,
+                            _ if percentage_of_total_supply > Decimal::from_f64(0.01).unwrap() => categories.medium += 1,
+                            _ if percentage_of_total_supply > Decimal::from_f64(0.001).unwrap() => categories.small += 1,
+                            _ if percentage_of_total_supply <= Decimal::from_f64(0.0001).unwrap() => categories.micro += 1,
+                            _ => (), // Handle unexpected cases
+                        };
+                    });
+
+// Now, calculate holder_ratio based on non-empty wallets
+                    let holder_ratio = if initialized_count.clone() > 0 {
+                        non_empty_wallet_count.clone() as f64 / initialized_count.clone() as f64
                     } else {
                         0.0 // Avoid division by zero
                     };
 
-                    println!("Initialized Accounts: {}", initialized_count);
-                    println!("Holder Accounts: {}", holder_count.clone());
-                    println!("Holder Ratio: {:.2}", holder_ratio);
 
-                    // You might want to adjust what you insert into holders_count based on your requirements
-                    holders_count.insert(mint_address.clone(), holder_count);
+                    let stats = HolderStats {
+                        mint_address: mint_address.clone(),
+                        token_supply: Some(supply.unwrap_or(Decimal::zero())),
+                        initialized_accounts: initialized_count,
+                        holder_accounts: non_empty_wallet_count,
+                        holder_ratio: holder_ratio,
+                        categories: Option::from(categories),
+                    };
+                    println!("{:#?}", stats);
+                    results.push(stats);
                 }
                 Err(e) => {
                     eprintln!("Failed to parse response JSON: {:?}", e);
@@ -112,7 +184,7 @@ async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<HashMap<S
         }
     }
 
-    Ok(holders_count)
+    Ok(results)
 }
 
 async fn pretty_print_response(response: SolanaRpcResponse) -> Result<(), Box<dyn std::error::Error>> {

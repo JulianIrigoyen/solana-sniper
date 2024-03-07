@@ -197,7 +197,7 @@ async fn get_largest_accounts_for_mints(mint_addresses: Vec<String>) -> Result<V
 }
 
 
-async fn get_token_supply(client: &Client, mint_address: &str) -> Result<TokenSupply, Box<dyn Error>> {
+pub async fn get_token_supply(client: &Client, mint_address: &str) -> Result<TokenSupply, Box<dyn Error>> {
     println!("Finding token supply for {:#?}", mint_address);
 
     let rpc_request = json!({
@@ -230,7 +230,7 @@ async fn get_token_supply(client: &Client, mint_address: &str) -> Result<TokenSu
     }
 }
 
-async fn write_whales_to_csv(program_address: &str, whales: &[WhaleDetail]) -> Result<(), Box<dyn Error>> {
+pub async fn write_whales_to_csv(program_address: &str, whales: &[WhaleDetail]) -> Result<(), Box<dyn Error>> {
     let date = Local::now().format("%Y-%m-%d").to_string();
     let dir_path = PathBuf::from(format!("data/{}/{}/whales", program_address, date));
     
