@@ -32,9 +32,13 @@ Now that we can quickly get a sense of a new token's distribution (and whales), 
 (since we are using Solana):
 - Jupiter
 - Raydium
-- 
+- Orca
+- Openbook
 
+ This can easily be confirmed by putting the program ID in the DEX search bar. What is more interesting is to have immediate alerts about new token mints with high liquidity -> this we snipe. 
+ How? We need to find transactions that have the InitializeMint instruction. Easy. Or not so easy when you have 1000s and 1000s of TPS! AH i love solana. 
 
+ 
 
 
 ###### Journal -- Solana Meme coin Holders
