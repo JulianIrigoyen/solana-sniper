@@ -3,11 +3,15 @@
 ** this is a fork of rust-websocket-server
 
 
+To monitor the market effectively using the Solana JSON RPC API combined with WebSocket data, we focus on endpoints that provide real-time or near-real-time information about transactions, account balances, and the overall state of the blockchain.
+
+[RTFM](https://solana.com/es/docs/rpc) -  Here are some of the most relevant endpoints for market monitoring purposes:
+
 ## Features: 
 
-1. Finds new meme coin launches on the solana blockchain. 
-2. Snipes!
+1. Analyzes holders and token distribution for a given SPL address. Follow this example to basically do anything you want.
 
+Coming soon: Sniper! Contact me if you want to collab
 
 ### Run
 
