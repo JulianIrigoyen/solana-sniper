@@ -195,7 +195,27 @@ Fully Diluted Valuation refers to the valuation of a token if all its future sup
 It's calculated by multiplying the total maximum supply of the token by its current price.
 
 
+## Nice to have:
 
+### Technical Indicators
+
+- You receive alerts when there are some buy/sell signals following professional technical indicators. Recommended for professional users.
+(Example: "EMA of SOL/USD 1h cross up 70”)
+
+### Token Stats Performance
+
+- You receive alerts when token(s) changes its non-price parameters such as volume, number of trades, ect. in a certain time frames.
+(Example: "SOL Price Change % in 1h is greater than 30%”)
+
+### Trading Events
+
+- You receive alerts when specific actions happened, such as large buys, large sells or any trades by a wallet.
+(Example: "Wallet HhfmVzo...NxAFFKbWU2h (Solana) has a trade with value greater than $100k at Jupiter”)
+
+Market Movements
+
+You receive notifications following market events such as new trending tokens or new tokens listed.
+(Example: "SOL gets into Top10 Trending list")
 
 
 

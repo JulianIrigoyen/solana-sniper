@@ -49,6 +49,7 @@ mod http;
 mod trackers;
 mod schema;
 mod subscriber;
+mod decoder;
 
 /**
 
