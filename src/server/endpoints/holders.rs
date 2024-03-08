@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 use std::error::Error;
 use std::str::FromStr;
 use actix_web::{web, HttpResponse, Responder};
@@ -111,9 +112,9 @@ async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<Vec<Holde
         // Construct headers
         let mut headers = header::HeaderMap::new();
         headers.insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
-
+        let rpc_url = env::var("PRIVATE_SOLANA_QUICKNODE").expect("PRIVATE_SOLANA_QUICKNODE must be set");
         let response = client
-            .post("https://necessary-light-mound.solana-mainnet.quiknode.pro/4c456991f88d116bec4eee1e69e4d0495b08ca42/")
+            .post(rpc_url)
             .headers(headers)
             .json(&rpc_request)
             .send()
@@ -166,7 +167,7 @@ async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<Vec<Holde
                             _ if percentage_of_total_supply > Decimal::from_f64(0.01).unwrap() => holder_category_count.medium += 1,
                             _ if percentage_of_total_supply > Decimal::from_f64(0.001).unwrap() => holder_category_count.small += 1,
                             _ if percentage_of_total_supply <= Decimal::from_f64(0.0001).unwrap() => holder_category_count.micro += 1,
-                            _ => (), // Handle unexpected cases
+                            _ => (),
                         };
                     });
 
@@ -183,35 +184,35 @@ async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<Vec<Holde
                             }),
                             ("small".to_string(), CategoryDetail {
                                 holders: holder_category_count.small,
-                                max_supply_percentage: 0.01,
+                                max_supply_percentage: 0.001,
                                 token_amount_range: format!("{:.0} - {:.0} tokens",
                                                             supply * Decimal::from_f64(0.00001).unwrap() + Decimal::one(),
                                                             supply * Decimal::from_f64(0.0001).unwrap()),
                             }),
                             ("medium".to_string(), CategoryDetail {
                                 holders: holder_category_count.medium,
-                                max_supply_percentage: 0.05,
+                                max_supply_percentage: 0.01,
                                 token_amount_range: format!("{:.0} - {:.0} tokens",
                                                             supply * Decimal::from_f64(0.0001).unwrap(),
                                                             supply * Decimal::from_f64(0.001).unwrap() - Decimal::one()),
                             }),
                             ("large".to_string(), CategoryDetail {
                                 holders: holder_category_count.large,
-                                max_supply_percentage: 0.1,
+                                max_supply_percentage: 0.05,
                                 token_amount_range: format!("{:.0} - {:.0} tokens",
                                                             supply * Decimal::from_f64(0.001).unwrap(),
                                                             supply * Decimal::from_f64(0.01).unwrap() - Decimal::one()),
                             }),
                             ("major".to_string(), CategoryDetail {
                                 holders: holder_category_count.major,
-                                max_supply_percentage: 1.0,
+                                max_supply_percentage: 0.1,
                                 token_amount_range: format!("{:.0} - {:.0} tokens",
                                                             supply * Decimal::from_f64(0.01).unwrap(),
                                                             supply * Decimal::from_f64(0.1).unwrap() - Decimal::one()),
                             }),
                             ("whale".to_string(), CategoryDetail {
                                 holders: holder_category_count.whale,
-                                max_supply_percentage: 50.0, // This is an example; adjust based on your definitions
+                                max_supply_percentage: 1.00,
                                 token_amount_range: format!(">{:.0} tokens",
                                                             supply * Decimal::from_f64(0.1).unwrap()),
                             }),
