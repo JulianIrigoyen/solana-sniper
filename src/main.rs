@@ -106,6 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let db_session_manager = Arc::new(DbSessionManager::new(&database_url));
 
+
     // Websocket Server Initialization
     let ws_host = env::var("WS_SERVER_HOST").expect("WS_HOST must be set");
     let ws_port = env::var("WS_SERVER_PORT").expect("WS_PORT must be set");
@@ -114,74 +115,113 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // ws_server.run().await
     });
 
-    let solana_ws_url = String::from("wss://api.mainnet-beta.solana.com");
+    let solana_public_ws_url = String::from("wss://api.mainnet-beta.solana.com");
+    let solana_private_ws_url = env::var("PRIVATE_SOLANA_QUICKNODE").expect("PRIVATE_SOLANA_QUICKNODE must be set");
+
 
     // api key is provided in the path
     // let solana_api_key = env::var("ALCHEMY_SOLANA_API_KEY").expect("ALCHEMY_SOLANA_API_KEY must be set");
-    let (mut solana_ws_stream, _) = connect_async(solana_ws_url.clone()).await?;
+    let (mut solana_ws_stream, _) = connect_async(solana_public_ws_url.clone()).await?;
     println!("Connected to Solana WebSocket");
 
+    //https://solana.com/docs/rpc/websocket/accountsubscribe
     let solana_subscriber = WebSocketSubscriber::<SolanaSubscriptionBuilder>::new(
-        solana_ws_url.to_string(),
+        solana_private_ws_url.to_string(),
+        // solana_public_ws_url.to_string(),
         None,
         AuthMethod::None,
         SolanaSubscriptionBuilder,
     );
 
-    /** Program Ids
-                     - WIF:          EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm
-                     - RETARDIO:     6ogzHhzdrQr9Pgv6hZ2MNze7UrzBMAFyBBWUYp1Fhitx
-                     - BONK:         DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263
-                     - UPDOG:        HJ39rRZ6ys22KdB3USxDgNsL7RKiQmsC3yL8AS3Suuku
-     */
-
-    let program_ids = vec![
-        ("EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "base64"), // WIF
-        ("6ogzHhzdrQr9Pgv6hZ2MNze7UrzBMAFyBBWUYp1Fhitx", "jsonParsed"), // RETARDIO
-        ("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "base64"), // BONK
-        ("HJ39rRZ6ys22KdB3USxDgNsL7RKiQmsC3yL8AS3Suuku", "jsonParsed"), // UPDOG
+    let subscription_program_ids = vec![
+        "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",      // WIF
+        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",     // BONK
+        "HJ39rRZ6ys22KdB3USxDgNsL7RKiQmsC3yL8AS3Suuku" // UPDOG
     ];
 
-    let mut params: Vec<(&str, Vec<String>)> = Vec::new();
-
-    for (id, encoding) in program_ids {
+    let mut sub_program_params: Vec<(&str, Vec<String>)> = Vec::new();
+    for id in subscription_program_ids {
         let param = (
             "programSubscribe",
             vec![
                 id.to_string(),
                 json!({
-                "encoding": encoding,
+                "encoding": "jsonParsed",
                 "commitment": "finalized"
             }).to_string(),
             ],
         );
-        params.push(param);
+        sub_program_params.push(param);
     }
 
-    let log_params = vec![
-        ("logsSubscribe", vec!["6ogzHhzdrQr9Pgv6hZ2MNze7UrzBMAFyBBWUYp1Fhitx".to_string(), "finalized".to_string()]),
+    let sub_program_params = vec![
+        ("logsSubscribe", vec!["5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1".to_string(), "finalized".to_string()]),
         // Add more subscriptions as needed
     ];
+    // solana_subscriber.subscribe(&mut solana_ws_stream, &sub_program_params).await?;
+    
+    let account_program_ids: Vec<String> = vec![
+        ("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1".to_string()), //RAYDIUM AUTHORITY V4
+    ];
 
-    // Subscribe to solana streams
-    solana_subscriber.subscribe(&mut solana_ws_stream, &log_params).await?;
+    let sub_accounts_messages = account_program_ids.iter().map(|pubkey| {
+        json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "accountSubscribe",
+                        "params": [
+                            pubkey,
+                            {
+                                "encoding": "jsonParsed",
+                                "commitment": "finalized"
+                            }
+                        ]
+                    }).to_string()
+    });
+
+    let raydium_public_key = "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX";
+    let openbook_public_key = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
+    let log_program_ids = vec![
+        raydium_public_key,
+    ];
+
+    let sub_logs_messages =
+        json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "logsSubscribe",
+                        "params": [
+                            {
+                                "mentions": log_program_ids
+                            },
+                            {
+                                "encoding": "jsonParsed",
+                                "commitment": "finalized"
+                            }
+                        ]
+                    }).to_string();
+
+        println!("Subscribing to {} with provided messages :: {:?}", solana_private_ws_url.clone(), sub_logs_messages.clone());
+        solana_ws_stream.send(Message::Text(sub_logs_messages)).await?;
 
     let (solana_event_sender, solana_event_receiver) =
         bounded::<SolanaEventTypes>(5000);
 
     let solana_ws_message_processing_task = tokio::spawn(async move {
-        // consume_stream::<SolanaEventTypes>(&mut solana_ws_stream, solana_event_sender).await;
+        consume_stream::<SolanaEventTypes>(&mut solana_ws_stream, solana_event_sender).await;
     });
+
+    let _ = server::http_server::run_server().await;
 
 
     // Wait for all tasks to complete
     let _ = tokio::try_join!(
         ws_server_task,
-        // solana_ws_message_processing_task
+        solana_ws_message_processing_task
     );
-
-    let _ = server::http_server::run_server().await;
 
 
     Ok(())
 }
+
+//https://docs.birdeye.so/reference/get_public-exists-token

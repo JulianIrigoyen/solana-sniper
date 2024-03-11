@@ -15,16 +15,19 @@ pub async fn consume_stream<T: WebsocketEventTypes + Send + 'static>(
     tx: Sender<T>,
 ) {
     while let Some(message) = ws_stream.next().await {
+        // println!("Got message message: {:?}", message);
         match message {
+
             Ok(Message::Text(text)) => {
-                if let Err(e) = process_text_message(text, &tx).await {
-                    // eprintln!("Failed to process text message: {:?}", e);
+                if text.contains("initialize2") {
+                    println!("Found INIT in message: {}", text);
+                    if let Err(e) = process_text_message(text, &tx).await {
+                        // eprintln!("Failed to process text message: {:?}", e);
+                    }
                 }
+
+
             }
-            Ok(Message::Binary(bin)) => {
-                println!("Received Binary Message: {:?}", bin); // Handle binary messages if needed
-            }
-            // Add cases for other message types if necessary
             Err(e) => eprintln!("Error receiving message: {:?}", e),
             _ => {}
         }

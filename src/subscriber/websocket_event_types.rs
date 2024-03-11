@@ -1,6 +1,9 @@
 use std::error::Error;
 use serde_json::Value;
+// use crate::models::solana::solana_account_notification::SolanaAccountNotification;
 use crate::models::solana::solana_event_types::SolanaEventTypes;
+use crate::models::solana::solana_logs_notification::SolanaLogsNotification;
+use crate::models::solana::solana_program_notification::SolanaProgramNotification;
 use crate::util::serde_helper::deserialize_into;
 
 ///Trait used for event deserialization
@@ -20,19 +23,30 @@ impl WebsocketEventTypes for SolanaEventTypes {
         }
     }
 
-    fn deserialize_event(value: &Value) -> Result<SolanaEventTypes, Box<dyn Error>> {
+    fn deserialize_event(value: &Value) -> Result<Self, Box<dyn Error>> {
         println!("{}", format!("Attempting to deserialize SOLANA event:: {:?}", value));
 
-        let result = match value {
-            _ => {
-                Err("Deserialization error: unsupported type or malformed JSON".into())
-            }
+        let method = value["method"].as_str().ok_or_else(|| "Missing method in event")?;
+        let result = match method {
+            "logsNotification" => {
+                let log_notification = deserialize_into::<SolanaLogsNotification>(value)?;
+                println!("Signature: {}", log_notification.params.result.value.signature);
+                Ok(SolanaEventTypes::LogNotification(log_notification))
+            },
+
+            "programNotification" => {
+                deserialize_into::<SolanaProgramNotification>(&value)
+                    .map(SolanaEventTypes::ProgramNotification)
+            },
+            _ => Err(format!("Unsupported event type: {}", method).into()),
         };
+
         match &result {
-            Ok(deserialized) => println!("BINANCE EVENT: {:?}", deserialized),
-            Err(e) => {}
+            Ok(deserialized) => println!("SOLANA EVENT: {:?}", deserialized),
+            Err(e) => println!("Error deserializing Solana event: {:?}", e),
         }
 
         result
     }
+
 }

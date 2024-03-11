@@ -81,7 +81,6 @@ impl<B: SubscriptionBuilder> WebSocketSubscriber<B> {
 }
 
 pub struct SolanaSubscriptionBuilder;
-
 impl SubscriptionBuilder for SolanaSubscriptionBuilder {
     fn build_subscription_messages(params: &[(&str, Vec<String>)]) -> Vec<Message> {
         params.iter().map(|&(method, ref args)| {

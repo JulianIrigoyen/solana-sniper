@@ -171,6 +171,8 @@ async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<Vec<Holde
                         };
                     });
 
+                    //todo market cap: token price * circulating supply
+
                     let mut category_detail: HashMap<String, CategoryDetail>;
 
                     if let Some(supply) = supply {
@@ -228,6 +230,13 @@ async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<Vec<Holde
                     } else {
                         0.0 // Avoid division by zero
                     };
+
+                    //todo -> store non_empty_wallet_count
+                    //todo -> reshoot this call after n minutes
+                    //todo -> fetch previous non_empty_wallet_count
+                    //todo -> calculate delta = new_non_empty_wallet_count -  previous_nonempty_wallet_count
+                    //todo -> calculate calcaute % and store
+                    //todo -> alert
 
                     let stats = HolderDetailedStats {
                         mint_address: mint_address.clone(),
