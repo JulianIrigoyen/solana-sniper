@@ -40,6 +40,8 @@ use crate::subscriber::websocket_subscriber::{WebSocketSubscriber, AuthMethod, S
 //     EventFilters, FilterCriteria, FilterValue, ParameterizedFilter,
 // };
 use crate::subscriber::consume_stream::{consume_stream};
+use crate::trackers::raydium::new_token_tracker;
+use crate::trackers::raydium::new_token_tracker::NewTokenTracker;
 
 mod db;
 mod util;
@@ -57,49 +59,30 @@ Welcome to the Solana Sniper.
 
  */
 
-// fn run_filtered_binance_dataflow(
-//     event: BinanceEventTypes,
-//     worker: &mut Worker<timely::communication::Allocator>,
-//     filters: EventFilters,
-//     db_session_manager: Arc<DbSessionManager>,
-//     rsi_tracker: Arc<Mutex<RsiTracker>>,
-//     depth_tracker: Arc<Mutex<DepthTracker>>,
-// ) {
-//     worker.dataflow(|scope| {
-//         let (mut input_handle, stream) = scope.new_input::<BinanceEventTypes>();
-//
-//         stream.inspect(move |event| {
-//
-//
-//             let rsi_tracker_clone = Arc::clone(&rsi_tracker);
-//             let depth_tacker_clone = Arc::clone(&depth_tracker);
-//             // if let BinanceEventTypes::Kline(kline) = event {
-//             //     if kline.symbol == "BTCUSDT" {
-//             //         match kline.kline.interval.as_str() {
-//             //             "1s" | "5m" | "15m" => {
-//             //                 // Lock the RsiTracker for each event to safely update its state
-//             //                 let mut tracker = rsi_tracker_clone.lock().unwrap();
-//             //                 tracker.apply_kline(kline);
-//             //
-//             //                 if let Some(rsi) = tracker.get_rsi(&kline.symbol, &kline.kline.interval) {
-//             //                     println!("Updated RSI for {} at {} interval: {}", kline.symbol, kline.kline.interval, rsi);
-//             //                 }
-//             //             },
-//             //             _ => {} // Ignore other intervals
-//             //         }
-//             //     }
-//             // }
-//
-//             if let BinanceEventTypes::PartialBookDepth(depth) = event {
-//                 let mut tracker = depth_tracker.lock().unwrap();
-//                 tracker.apply(event);
-//             }
-//         });
-//
-//         input_handle.send(event);
-//         input_handle.advance_to(1);
-//     });
-// }
+fn run_filtered_solana_dataflow(
+    event: SolanaEventTypes,
+    worker: &mut Worker<timely::communication::Allocator>,
+    // filters: EventFilters,
+    db_session_manager: Arc<DbSessionManager>,
+    new_token_tracker: Arc<Mutex<NewTokenTracker>>,
+    // depth_tracker: Arc<Mutex<DepthTracker>>,
+) {
+    worker.dataflow(|scope| {
+        let (mut input_handle, stream) = scope.new_input::<SolanaEventTypes>();
+
+        stream.inspect(move |event| {
+
+            if let SolanaEventTypes::LogNotification(log) = event {
+                let mut tracker = new_token_tracker.lock().unwrap();
+                tracker.apply(event);
+            }
+        });
+
+        input_handle.send(event);
+        input_handle.advance_to(1);
+    });
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
@@ -211,13 +194,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         consume_stream::<SolanaEventTypes>(&mut solana_ws_stream, solana_event_sender).await;
     });
 
+
+    let new_token_tracker = Arc::new(Mutex::new(NewTokenTracker::new()));
+    let solana_db_session_manager = db_session_manager.clone();
+    let solana_dataflow_task = tokio::spawn(async move {
+        thread::spawn(move || {
+            execute_from_args(env::args(), move |worker| {
+                let input_handle: InputHandle<i64, SolanaEventTypes> = InputHandle::new();
+
+                loop {
+                    match solana_event_receiver.recv() {
+                        Ok(event) => {
+                            run_filtered_solana_dataflow(event, worker,  solana_db_session_manager.clone(), Arc::clone(&new_token_tracker));
+                            worker.step();
+                        }
+                        Err(_) => {
+                            break;
+                        }
+                    }
+                }
+            }).unwrap();
+        });
+    });
+
     let _ = server::http_server::run_server().await;
 
 
     // Wait for all tasks to complete
     let _ = tokio::try_join!(
         ws_server_task,
-        solana_ws_message_processing_task
+        solana_ws_message_processing_task,
+        solana_dataflow_task
     );
 
 
