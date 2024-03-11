@@ -10,6 +10,9 @@ To monitor the market effectively using the Solana JSON RPC API combined with We
 ## Features: 
 
 1. Analyzes holders and token distribution for a given SPL address. Follow this example to basically do anything you want.
+2. Decodes Transactions (WIP) =>
+   2.1 We use a client to fetch unknown program IDLs. Without these we cannot properly decode base64 data in transaction instructions.
+3. 
 
 Coming soon: Sniper! Contact me if you want to collab
 
@@ -46,13 +49,11 @@ Now that we can quickly get a sense of a new token's distribution (and whales), 
 ```json
 
 
-$RETARDIO
-Finding holders for [
-"6ogzHhzdrQr9Pgv6hZ2MNze7UrzBMAFyBBWUYp1Fhitx",
-]
-Initialized Accounts: 9444 -> 9710 (5/03/24 12pm) -> 9880  (18pm)
-Holder Accounts: 4227 -> 4219 -> 4243
-Holder Ratio: 0.45 -> 0.43 -> 0.43
+$RETARDIO "6ogzHhzdrQr9Pgv6hZ2MNze7UrzBMAFyBBWUYp1Fhitx"
+
+Initialized Accounts: 9444 -> 9710 (5/03/24 12pm) -> 9880  (18pm) -> 11665 (8/3/2-24)
+Holder Accounts: 4227 -> 4219 -> 4243 -> 4695
+Holder Ratio: 0.45 -> 0.43 -> 0.43 -> 0.4 
 
 
 $WIF
