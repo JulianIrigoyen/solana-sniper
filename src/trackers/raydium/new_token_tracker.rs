@@ -84,7 +84,6 @@ impl NewTokenTracker {
     pub(crate) fn apply(&mut self, event: &SolanaEventTypes) {
         println!("APPLYING NEW TOKEN TRACKER EVENT {:?}", event);
         match event {
-            // BinanceEventTypes::Trade(data) => self.process_binance_trade(data),
             SolanaEventTypes::LogNotification(log) => self.handle_new_token_signature(log),
             _ => {}
         }
