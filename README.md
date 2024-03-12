@@ -4,6 +4,8 @@
 
 [RTFM](https://solana.com/es/docs/rpc) <3
 
+"Me cabe la de disparar, pero hay que apuntar un poquito..." - Emiliano Migliorata
+
 ## Features: 
 
 1. Analyzes holders and token distribution for a given SPL address. Follow this example to basically do anything you want.
