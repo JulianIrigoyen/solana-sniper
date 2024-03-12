@@ -15,6 +15,7 @@ extern crate timely;
 use std::{env, thread};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::task::Context;
 
 use crossbeam_channel::{bounded, Sender};
 use dotenv::dotenv;
@@ -43,6 +44,10 @@ use crate::subscriber::consume_stream::{consume_stream};
 use crate::trackers::raydium::new_token_tracker;
 use crate::trackers::raydium::new_token_tracker::NewTokenTracker;
 
+use actix::prelude::*;
+use crate::models::solana::solana_transaction::SolanaTransaction;
+use crate::models::solana::solana_account_notification::SolanaAccountNotification;
+
 mod db;
 mod util;
 mod models;
@@ -59,32 +64,22 @@ Welcome to the Solana Sniper.
 
  */
 
-fn run_filtered_solana_dataflow(
-    event: SolanaEventTypes,
-    worker: &mut Worker<timely::communication::Allocator>,
-    // filters: EventFilters,
-    db_session_manager: Arc<DbSessionManager>,
-    new_token_tracker: Arc<Mutex<NewTokenTracker>>,
-    // depth_tracker: Arc<Mutex<DepthTracker>>,
-) {
-    worker.dataflow(|scope| {
-        let (mut input_handle, stream) = scope.new_input::<SolanaEventTypes>();
 
-        stream.inspect(move |event| {
+// Supervisor actor that spawns signature processors or manages a pool of them
 
-            if let SolanaEventTypes::LogNotification(log) = event {
-                let mut tracker = new_token_tracker.lock().unwrap();
-                tracker.apply(event);
-            }
-        });
-
-        input_handle.send(event);
-        input_handle.advance_to(1);
-    });
+// Message to instruct the supervisor to process a signature
+#[derive(Message)]
+#[rtype(result = "()")]
+struct ProcessSignature {
+    signature: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+    // let system = actix::System::new();
+
+
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let db_session_manager = Arc::new(DbSessionManager::new(&database_url));
@@ -119,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscription_program_ids = vec![
         "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",      // WIF
         "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",     // BONK
-        "HJ39rRZ6ys22KdB3USxDgNsL7RKiQmsC3yL8AS3Suuku" // UPDOG
+        "HJ39rRZ6ys22KdB3USxDgNsL7RKiQmsC3yL8AS3Suuku", // UPDOG
     ];
 
     let mut sub_program_params: Vec<(&str, Vec<String>)> = Vec::new();
@@ -137,35 +132,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sub_program_params.push(param);
     }
 
-    let sub_program_params = vec![
-        ("logsSubscribe", vec!["5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1".to_string(), "finalized".to_string()]),
-        // Add more subscriptions as needed
-    ];
-    // solana_subscriber.subscribe(&mut solana_ws_stream, &sub_program_params).await?;
-    
     let account_program_ids: Vec<String> = vec![
-        ("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1".to_string()), //RAYDIUM AUTHORITY V4
+        ("FJRZ5sTp27n6GhUVqgVkY4JGUJPjhRPnWtH4du5UhKbw".to_string()), //whale de miglio
+        ("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1".to_string()), //raydium
+        ("11111111111111111111111111111111".to_string()), //system program
+        ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string()), //token program
     ];
 
-    let sub_accounts_messages = account_program_ids.iter().map(|pubkey| {
+    let sub_accounts_message =
         json!({
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "accountSubscribe",
-                        "params": [
-                            pubkey,
-                            {
-                                "encoding": "jsonParsed",
-                                "commitment": "finalized"
-                            }
-                        ]
-                    }).to_string()
-    });
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "accountSubscribe",
+              "params": [
+                "FJRZ5sTp27n6GhUVqgVkY4JGUJPjhRPnWtH4du5UhKbw",
+                {
+                  "encoding": "jsonParsed",
+                  "commitment": "finalized"
+                }
+              ]
+            }).to_string();
+
+
+    println!("Subscribing to ACCOUNTS on  {} with provided messages :: {:?}", solana_private_ws_url.clone(), sub_accounts_message.clone());
+    solana_ws_stream.send(Message::Text(sub_accounts_message)).await?;
+
 
     let raydium_public_key = "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX";
+    let miglio_whale = "FJRZ5sTp27n6GhUVqgVkY4JGUJPjhRPnWtH4du5UhKbw";
+    let a_whale = "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa";
     let openbook_public_key = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
     let log_program_ids = vec![
-        raydium_public_key,
+        a_whale,
     ];
 
     let sub_logs_messages =
@@ -184,37 +182,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ]
                     }).to_string();
 
-        println!("Subscribing to {} with provided messages :: {:?}", solana_private_ws_url.clone(), sub_logs_messages.clone());
-        solana_ws_stream.send(Message::Text(sub_logs_messages)).await?;
+    println!("Subscribing to LOGS on {} with provided messages :: {:?}", solana_private_ws_url.clone(), sub_logs_messages.clone());
+    solana_ws_stream.send(Message::Text(sub_logs_messages)).await?;
 
-    let (solana_event_sender, solana_event_receiver) =
+    //another way
+    let sub_log_params = vec![
+        ("logsSubscribe", vec!["5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1".to_string(), "finalized".to_string()]),
+        // Add more subscriptions as needed
+    ];
+    // solana_subscriber.subscribe(&mut solana_ws_stream, &sub_log_params).await?;
+
+
+    let (solana_event_sender, mut solana_event_receiver) =
         bounded::<SolanaEventTypes>(5000);
 
     let solana_ws_message_processing_task = tokio::spawn(async move {
         consume_stream::<SolanaEventTypes>(&mut solana_ws_stream, solana_event_sender).await;
     });
 
-
     let new_token_tracker = Arc::new(Mutex::new(NewTokenTracker::new()));
     let solana_db_session_manager = db_session_manager.clone();
-    let solana_dataflow_task = tokio::spawn(async move {
-        thread::spawn(move || {
-            execute_from_args(env::args(), move |worker| {
-                let input_handle: InputHandle<i64, SolanaEventTypes> = InputHandle::new();
 
-                loop {
-                    match solana_event_receiver.recv() {
-                        Ok(event) => {
-                            run_filtered_solana_dataflow(event, worker,  solana_db_session_manager.clone(), Arc::clone(&new_token_tracker));
-                            worker.step();
-                        }
-                        Err(_) => {
-                            break;
-                        }
+    let solana_task = tokio::spawn(async move {
+        while let Ok(event) = solana_event_receiver.recv() {
+            // println!("[[SOLANA TASK]] got event {:?}", event);
+            match event {
+                SolanaEventTypes::LogNotification(ref log) => {
+
+                    println!("[[SOLANA TASK]] Processing log with signature {:?}", event);
+                    if log.params.result.value.err.is_none() {
+                        // If there are no errors, print the event and extract the signature
+                        let signature = log.params.result.value.signature.clone();
+                        println!("[[SOLANA TASK]] SUCCESSFUL TRANSACTION Signature: {}", signature);
                     }
+
                 }
-            }).unwrap();
-        });
+                SolanaEventTypes::AccountNotification(notification) => {
+                    let signature = notification;
+                    println!("[[SOLANA TASK]] GOT ACCOUNT NOTIFICATION {:?}", signature)
+                }
+                _ => {
+                    println!("Stand by")
+                }
+            }
+        }
     });
 
     let _ = server::http_server::run_server().await;
@@ -224,11 +235,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = tokio::try_join!(
         ws_server_task,
         solana_ws_message_processing_task,
-        solana_dataflow_task
+        solana_task
     );
 
 
     Ok(())
 }
 
-//https://docs.birdeye.so/reference/get_public-exists-token
+async fn fetch_transaction_details(signature: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    // Implement the logic to fetch transaction details using the signature
+    // This will likely involve making an HTTP request to the Solana JSON RPC API
+    println!("GETTING TX FOR {:?}", signature);
+    Ok(serde_json::Value::Null) // Placeholder
+}
+//
+// async fn fetch_token_metadata(account: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+//     // Implement the logic to fetch token metadata
+//     // This might involve querying the Metaplex token metadata program, for example
+//     Ok(serde_json::Value::Null) // Placeholder
+// }
