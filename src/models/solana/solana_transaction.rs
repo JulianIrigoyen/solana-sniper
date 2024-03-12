@@ -1,78 +1,62 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SolanaTransaction {
     pub jsonrpc: String,
-    pub method: String,
-    pub params: NotificationParams,
+    pub result: TransactionResult,
+    pub id: u64,
+    pub block_time: Option<i64>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NotificationParams {
-    pub result: NotificationResult,
-    pub subscription: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NotificationResult {
-    pub context: NotificationContext,
-    pub value: NotificationValue,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NotificationContext {
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TransactionResult {
+    pub meta: TransactionMeta,
     pub slot: u64,
+    pub transaction: TransactionDetail,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NotificationValue {
-    pub signature: String,
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TransactionMeta {
     pub err: Option<serde_json::Value>,
-    pub logs: Vec<String>,
+    pub fee: u64,
+    #[serde(default)]
+    pub inner_instructions: Vec<serde_json::Value>,
+    pub post_balances: Vec<u64>,
+    #[serde(default)]
+    pub post_token_balances: Vec<serde_json::Value>,
+    pub pre_balances: Vec<u64>,
+    #[serde(default)]
+    pub pre_token_balances: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub rewards: Vec<serde_json::Value>,
+    pub status: HashMap<String, Option<serde_json::Value>>,
 }
 
-impl Default for SolanaTransaction {
-    fn default() -> Self {
-        SolanaTransaction {
-            jsonrpc: "".to_string(),
-            method: "".to_string(),
-            params: NotificationParams::default(),
-        }
-    }
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TransactionDetail {
+    pub message: TransactionMessage,
+    pub signatures: Vec<String>,
 }
 
-impl Default for NotificationParams {
-    fn default() -> Self {
-        NotificationParams {
-            result: NotificationResult::default(),
-            subscription: 0,
-        }
-    }
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TransactionMessage {
+    pub account_keys: Vec<String>,
+    pub header: TransactionHeader,
+    pub instructions: Vec<TransactionInstruction>,
+    pub recent_blockhash: String,
 }
 
-impl Default for NotificationResult {
-    fn default() -> Self {
-        NotificationResult {
-            context: NotificationContext::default(),
-            value: NotificationValue::default(),
-        }
-    }
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TransactionHeader {
+    pub num_readonly_signed_accounts: u8,
+    pub num_readonly_unsigned_accounts: u8,
+    pub num_required_signatures: u8,
 }
 
-impl Default for NotificationContext {
-    fn default() -> Self {
-        NotificationContext {
-            slot: 0,
-        }
-    }
-}
-
-impl Default for NotificationValue {
-    fn default() -> Self {
-        NotificationValue {
-            signature: "".to_string(),
-            err: None,
-            logs: vec![],
-        }
-    }
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TransactionInstruction {
+    pub accounts: Vec<u8>,
+    pub data: String,
+    pub program_id_index: u8,
 }

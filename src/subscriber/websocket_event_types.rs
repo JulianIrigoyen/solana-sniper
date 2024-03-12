@@ -48,10 +48,10 @@ impl WebsocketEventTypes for SolanaEventTypes {
             _ => Err(format!("Unsupported event type: {}", method).into()),
         };
 
-        match &result {
-            Ok(deserialized) => println!("[[DESERIALIZER]] DESERIALIZED SOLANA EVENT: {:?}", deserialized),
-            Err(e) => println!("Error deserializing Solana event: {:?}", e),
-        }
+        // match &result {
+        //     Ok(deserialized) => println!("[[DESERIALIZER]] DESERIALIZED SOLANA EVENT: {:?}", deserialized),
+        //     Err(e) => println!("Error deserializing Solana event: {:?}", e),
+        // }
 
         result
     }
