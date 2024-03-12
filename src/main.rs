@@ -94,7 +94,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let solana_public_ws_url = String::from("wss://api.mainnet-beta.solana.com");
-    let solana_private_ws_url = env::var("PRIVATE_SOLANA_QUICKNODE").expect("PRIVATE_SOLANA_QUICKNODE must be set");
+    let solana_private_ws_url = env::var("PRIVATE_SOLANA_QUICKNODE_WS").expect("PRIVATE_SOLANA_QUICKNODE_WS must be set");
+    let client = Client::new();
+    let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP").expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
+
 
 
     // api key is provided in the path
@@ -163,7 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let a_whale = "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa";
     let openbook_public_key = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
     let log_program_ids = vec![
-        a_whale,
+        raydium_public_key,
     ];
 
     let sub_logs_messages =
@@ -209,11 +212,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match event {
                 SolanaEventTypes::LogNotification(ref log) => {
 
-                    println!("[[SOLANA TASK]] Processing log with signature {:?}", event);
+                    // println!("[[SOLANA TASK]] Processing log with signature {:?}", event);
                     if log.params.result.value.err.is_none() {
                         // If there are no errors, print the event and extract the signature
                         let signature = log.params.result.value.signature.clone();
                         println!("[[SOLANA TASK]] SUCCESSFUL TRANSACTION Signature: {}", signature);
+                        // Here's where you make the HTTP request
+                        let transaction_response = client
+                            .post(&solana_private_http_url)
+                            .json(&json!({
+                                "jsonrpc": "2.0",
+                                "id": 1,
+                                "method": "getTransaction",
+                                "params": [
+                                    signature,
+                                    {
+                                        "encoding": "jsonParsed",
+                                        "maxSupportedTransactionVersion": 0 
+                                    }
+                                ]
+                            }))
+                            .send()
+                            .await;
+
+                        if let Ok(response) = transaction_response {
+                            if response.status().is_success() {
+                                match response.text().await {  // Properly await and match the result
+                                    Ok(text) => {  // `text` is of type `String` here
+                                        // Now you can use `text` as a `String`
+                                        match serde_json::from_str::<serde_json::Value>(&text) {
+                                            Ok(value) => println!("[[SOLANA TASK]] FOUND TRANSACTION: {:#?}", value),
+                                            Err(e) => eprintln!("Failed to deserialize transaction: {:?}", e),
+                                        }
+                                    },
+                                    Err(e) => eprintln!("Failed to read response text: {:?}", e),
+                                }
+                            } else {
+                                // If the response status is not successful, log the status
+                                eprintln!("Error fetching transaction details: {:?}", response.status());
+                            }
+                        } else {
+                            eprintln!("Failed to send the request or receive the response");
+                        }
+
+
                     }
 
                 }
@@ -231,12 +273,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = server::http_server::run_server().await;
 
 
-    // Wait for all tasks to complete
-    let _ = tokio::try_join!(
-        ws_server_task,
-        solana_ws_message_processing_task,
-        solana_task
-    );
+    match tokio::try_join!(ws_server_task, solana_ws_message_processing_task, solana_task) {
+        Ok(_) => println!("All tasks completed successfully"),
+        Err(e) => eprintln!("A task exited with an error: {:?}", e),
+    }
+    
 
 
     Ok(())
