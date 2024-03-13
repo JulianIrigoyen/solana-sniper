@@ -46,8 +46,8 @@ use crate::trackers::raydium::new_token_tracker;
 use crate::trackers::raydium::new_token_tracker::NewTokenTracker;
 
 use actix::prelude::*;
-use crate::models::solana::solana_transaction::SolanaTransaction;
 use crate::models::solana::solana_account_notification::SolanaAccountNotification;
+use crate::models::solana::solana_transaction::TransactionSummary;
 
 mod db;
 mod util;
@@ -198,106 +198,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let solana_db_session_manager = db_session_manager.clone();
     let client = Client::new();
 
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    #[serde(rename_all = "camelCase")]
-    struct RpcResponse {
-        id: u64,
-        jsonrpc: String,
-        result: Option<ResultField>,
-        block_time: Option<u64>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    struct ResultField {
-        meta: Meta,
-        transaction: Transaction,
-        slot: u64,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    #[serde(rename_all = "camelCase")]
-    struct Meta {
-        err: Option<Value>,
-        fee: u64,
-        inner_instructions: Vec<InnerInstruction>,
-        post_balances: Vec<u64>,
-        post_token_balances: Vec<TokenBalance>,
-        pre_balances: Vec<u64>,
-        pre_token_balances: Vec<TokenBalance>,
-        rewards: Vec<Value>,
-        status: Status,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    #[serde(rename_all = "camelCase")]
-    struct TokenBalance {
-        account_index: u64,
-        mint: String,
-        owner: String,
-        program_id: String,
-        ui_token_amount: UiTokenAmount,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    #[serde(rename_all = "camelCase")]
-    struct UiTokenAmount {
-        amount: String,
-        decimals: u8,
-        ui_amount: Option<f64>,
-        ui_amount_string: String,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    #[serde(rename_all = "camelCase")]
-    struct InnerInstruction {
-        index: u64,
-        instructions: Vec<Value>, // Placeholder for actual instruction structure
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    struct Status {
-        ok: Option<Value>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    #[serde(rename_all = "camelCase")]
-    struct TransactionMessage {
-        account_keys: Vec<AccountKey>,
-        instructions: Vec<Value>,
-        recent_blockhash: String,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    #[serde(rename_all = "camelCase")]
-    struct AccountKey {
-        pubkey: String,
-        signer: bool,
-        writable: bool,
-    }
-
-
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    struct Transaction {
-        message: TransactionMessage,
-        signatures: Vec<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    #[serde(rename_all = "camelCase")]
-    struct Header {
-        num_readonly_signed_accounts: u8,
-        num_readonly_unsigned_accounts: u8,
-        num_required_signatures: u8,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone)]
-    #[serde(rename_all = "camelCase")]
-    struct InstructionData {
-        accounts: Vec<u8>,
-        data: String,
-        program_id_index: Option<u8>,
-    }
-
     ///PROCESS DESERIALIZED SOLANA EVENTS
     let solana_task = tokio::spawn(async move {
         while let Ok(event) = solana_event_receiver.recv() {
@@ -338,16 +238,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         println!("{:#?}", value);
                                         match serde_json::from_value::<RpcResponse>(value) {
                                             Ok(tx) => {
-                                                println!("DESERIALIZED TRANSACTION {:?}", tx)
+                                                // println!("DESERIALIZED TRANSACTION {:?}. PREPARING SUMMARY", tx);
+                                                if let Some(result) = tx.result {
+                                                    let pre: Vec<TokenBalance> = result.clone().meta.pre_token_balances;
+                                                    let post: Vec<TokenBalance> = result.meta.post_token_balances;
+
+                                                    prepare_transaction_summary(signature, pre, post);
+                                                } else {
+                                                    eprintln!("TX YIELDED NO RESULT. ")
+                                                }
                                             }
                                             Err(e) => eprintln!("Error deserializing transaction {:?}", e),
                                         }
-
                                     },
                                     Err(e) => eprintln!("Failed to read response text: {:?}", e),
                                 }
                             } else {
-                                eprintln!("Error fetching transaction details: {:?}", response);
+                                eprintln!("Getting transaction returned failure: {:?}", response);
                             }
                         } else {
                             eprintln!("Could not get transaction for signature: {:?}", signature);
@@ -378,4 +285,147 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+
+fn prepare_transaction_summary(signature: String, pre_token_balances: Vec<TokenBalance>, post_token_balances: Vec<TokenBalance>) -> Vec<TransactionSummary> {
+    let mut summaries = Vec::new();
+    let mut balance_map = HashMap::new();
+
+    // Populate balance_map with pre token balances
+    for pre_balance in pre_token_balances {
+        let key = (pre_balance.mint.clone(), pre_balance.owner.clone());
+        let amount = pre_balance.ui_token_amount.amount.parse::<f64>().unwrap_or(0.0);
+        balance_map.insert(key, amount);
+    }
+
+    // Iterate through post token balances and calculate deltas
+    for post_balance in post_token_balances {
+        let key = (post_balance.mint.clone(), post_balance.owner.clone());
+        let post_amount = post_balance.ui_token_amount.amount.parse::<f64>().unwrap_or(0.0);
+
+        let pre_amount = balance_map.get(&key).unwrap_or(&0.0);
+        let delta = post_amount.clone() - pre_amount;
+
+        // Update the balance map to reflect the post balance for comparison in future transactions
+        balance_map.insert(key.clone(), post_amount);
+
+        if delta != 0.0 {
+            let summary = TransactionSummary {
+                signature: signature.to_string(),
+                program_id: post_balance.program_id.clone(),
+                amount_delta: delta,
+                mint: post_balance.mint.clone(),
+                owner: post_balance.owner.clone(),
+                token_name: "Placeholder".to_string(), // Placeholder for token name
+                token_symbol: "Placeholder".to_string(), // Placeholder for token symbol
+            };
+            println!("{}", summary);
+            println!("----------------------------------------");
+            println!("----------------------------------------");
+            println!("----------------------------------------");
+            summaries.push(summary);
+        }
+    }
+    summaries
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcResponse {
+    id: u64,
+    jsonrpc: String,
+    result: Option<ResultField>,
+    block_time: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResultField {
+    meta: Meta,
+    transaction: Transaction,
+    slot: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Meta {
+    err: Option<Value>,
+    fee: u64,
+    inner_instructions: Vec<InnerInstruction>,
+    post_balances: Vec<u64>,
+    post_token_balances: Vec<TokenBalance>,
+    pre_balances: Vec<u64>,
+    pre_token_balances: Vec<TokenBalance>,
+    rewards: Vec<Value>,
+    status: Status,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenBalance {
+    account_index: u64,
+    mint: String,
+    owner: String,
+    program_id: String,
+    ui_token_amount: UiTokenAmount,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UiTokenAmount {
+    amount: String,
+    decimals: u8,
+    ui_amount: Option<f64>,
+    ui_amount_string: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct InnerInstruction {
+    index: u64,
+    instructions: Vec<Value>, // Placeholder for actual instruction structure
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Status {
+    ok: Option<Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionMessage {
+    account_keys: Vec<AccountKey>,
+    instructions: Vec<Value>,
+    recent_blockhash: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountKey {
+    pubkey: String,
+    signer: bool,
+    writable: bool,
+}
+
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Transaction {
+    message: TransactionMessage,
+    signatures: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Header {
+    num_readonly_signed_accounts: u8,
+    num_readonly_unsigned_accounts: u8,
+    num_required_signatures: u8,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct InstructionData {
+    accounts: Vec<u8>,
+    data: String,
+    program_id_index: Option<u8>,
 }
