@@ -51,6 +51,7 @@ pub struct TxCheckedSummary {
     pub token_name: String,
     pub token_symbol: String,
     pub token_amount: Option<f64>, // use uiAmount ->  field that presents the amount in a format that's ready for display, taking into account the decimals. It represents the amount of tokens being transferred as a floating-point number.
+    pub detail: String, // use uiAmount ->  field that presents the amount in a format that's ready for display, taking into account the decimals. It represents the amount of tokens being transferred as a floating-point number.
 }
 
 
@@ -63,7 +64,8 @@ impl fmt::Display for TxCheckedSummary {
                 Mint: {}\n\
                 Token Name: {}\n\
                 Token Symbol: {}\n\
-                Token Amount: {}",
+                Token Amount: {}\n\
+                Detail: {}",
                self.signature,
                self.transaction_type,
                self.source,
@@ -71,7 +73,8 @@ impl fmt::Display for TxCheckedSummary {
                self.mint,
                self.token_name,
                self.token_symbol,
-               if self.token_amount.is_some() { self.token_amount.unwrap() } else { 0.0 }
+               if self.token_amount.is_some() { self.token_amount.unwrap() } else { 0.0 },
+               self.detail
         )
     }
 }
