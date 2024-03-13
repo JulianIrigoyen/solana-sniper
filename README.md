@@ -10,11 +10,25 @@
 
 1. Analyzes holders and token distribution for a given SPL address. Follow this example to basically do anything you want.
 2. Track new tokens =>
-   2.1 Subscribe to logs mentioning Raydium (more to come) and filter initialize2 events.
-   2.2 Grab the signature and fetch the transaction to find the main token address.
-   2.3 Fetch new token metadata
-   NTH -> Snipe here
-3. Track wallets => WIP
+   1. Subscribes to logs mentioning Raydium (more to come) and filter initialize2 events.
+   2. Grabs the signature and fetch the transaction to find the main token address.
+   3. Fetches new token metadata
+   
+3. Track wallets => working! Checkout l179 of main. Input your wallet and start tracking (must run the project!
+   1. Subscribes to the logs of the whale (l166)
+   2. Receive transaction signatures after consuming and parsing websocket events.
+   3. Fetches the transaction
+   4. Parses transaction instructions (for now, only supports TransferChecked instructions) and pre/post token balances
+   5. Outputs summary -> TODO: TELEGRAM BOT HERE
+
+4. WIP: Smart Whale tracking
+   1. Manually input [10 wallets](https://birdeye.so/leaderboard/7D?chain=solana)
+   2. Track wallet transactions in 5/10 minute intervals.
+   3. Persist a report for the given interval with Transaction Summaries
+   4. Feed the summaries of each wallet to GPT to create a whale overall summary for the given interval
+   5. Feed the each whale's summary of summaries to GPT to create an overal 10 minut summary.
+   6. Persist, train, repeat, test, DBAB
+
 
 
 ## Nice to have:
