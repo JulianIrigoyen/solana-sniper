@@ -19,12 +19,12 @@ pub async fn consume_stream<T: WebsocketEventTypes + Send + 'static>(
         match message {
 
             Ok(Message::Text(text)) => {
-                if text.contains("initialize2") {
-                    println!("Found INIT in message: {}", text);
-                    if let Err(e) = process_text_message(text, &tx).await {
-                        // eprintln!("Failed to process text message: {:?}", e);
-                    }
+                // if text.contains("initialize2") {
+                // println!("[[CONSUM STREAM]] GOT MESSAGE: {}", text);
+                if let Err(e) = process_text_message(text, &tx).await {
+                    // eprintln!("Failed to process text message: {:?}", e);
                 }
+                // }
 
 
             }
@@ -66,11 +66,11 @@ fn process_json_events<T: WebsocketEventTypes + Send + 'static>(
 
 fn process_single_event<T: WebsocketEventTypes + Send + 'static>(
     event: &Value,
-    tx: &Sender<T>,
+    sender: &Sender<T>,
 ) -> Result<(), Box<dyn StdError>> {
     match T::deserialize_event(event) {
         Ok(event) => {
-            tx.send(event).map_err(|e| e.into())
+            sender.send(event).map_err(|e| e.into())
         }
         Err(e) => {
             // eprintln!("consume_stream.process_single_event: Error deserializing message: {:?}", e);
