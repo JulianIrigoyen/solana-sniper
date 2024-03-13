@@ -8,6 +8,8 @@ use crate::server::endpoints::holders;
 use crate::server::endpoints::whales;
 use crate::server::endpoints::new_spls;
 
+use crate::server::endpoints::birdeye::token_prices;
+
 
 pub async fn run_server() -> std::io::Result<()> {
     HttpServer::new(|| {
@@ -18,6 +20,7 @@ pub async fn run_server() -> std::io::Result<()> {
                          .configure(whales::init_routes)
                          .configure(transactions::init_routes)
                          .configure(accounts::init_routes)
+                         .configure(token_prices::init_routes)
             )
     })
         .bind("127.0.0.1:8080")?

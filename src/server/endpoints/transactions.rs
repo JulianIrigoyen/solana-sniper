@@ -76,6 +76,8 @@ async fn process_transaction_signatures(signatures: Vec<String>) -> Result<Vec<T
             // TODO most useful print ever
             let value: serde_json::Value = serde_json::from_str(&response_text)?;
             println!("{:#?}", value);
+
+            //TODO FINISH THIS
         }
     }
 
