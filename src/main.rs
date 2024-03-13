@@ -14,6 +14,7 @@ extern crate timely;
 
 use std::{env, thread};
 use std::collections::HashMap;
+use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::task::Context;
 
@@ -47,7 +48,7 @@ use crate::trackers::raydium::new_token_tracker::NewTokenTracker;
 
 use actix::prelude::*;
 use crate::models::solana::solana_account_notification::SolanaAccountNotification;
-use crate::models::solana::solana_transaction::TransactionSummary;
+use crate::models::solana::solana_transaction::{TransactionSummary, TxCheckedSummary};
 
 mod db;
 mod util;
@@ -153,11 +154,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ------------ LOG SUBSCRIPTION ------------
     let raydium_public_key = "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX";
+    let openbook_public_key = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
+
+    // --- WHALE KEYS ---
     let miglio_whale = "FJRZ5sTp27n6GhUVqgVkY4JGUJPjhRPnWtH4du5UhKbw";
     let a_whale = "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa";
-    let openbook_public_key = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
+    let a_bad_whale = "bobCPc5nqVoX7r8gKzCMPLrKjFidjnSCrAdcYGCH2Ye";
+    let a_magaiba_top_trader = "71WDyyCsZwyEYDV91Qrb212rdg6woCHYQhFnmZUBxiJ6";
+
     let log_program_ids = vec![
-        raydium_public_key,
+        a_magaiba_top_trader,
     ];
 
     let sub_logs_messages =
@@ -196,6 +202,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     //let new_token_tracker = Arc::new(Mutex::new(NewTokenTracker::new()));
     let solana_db_session_manager = db_session_manager.clone();
+    let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP")
+        .expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
     let client = Client::new();
 
     ///PROCESS DESERIALIZED SOLANA EVENTS
@@ -206,10 +214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // println!("[[SOLANA TASK]] Processing log with signature {:?}", event);
                     if log.params.result.value.err.is_none() {
                         let signature = log.params.result.value.signature.clone();
-                        println!(
-                            "[[SOLANA TASK]] SUCCESSFUL TRANSACTION Signature: {}",
-                            signature
-                        );
+                        // println!("[[SOLANA TASK]] SUCCESSFUL TRANSACTION Signature: {}", signature);
 
                         //get transaction with received signature
                         let transaction_response = client
@@ -233,19 +238,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if response.status().is_success() {
                                 match response.text().await {
                                     Ok(text) => {
-                                        let value: serde_json::Value = serde_json::from_str(&text)
-                                            .expect("Failed to deserialize into value !!!!");
-                                        println!("{:#?}", value);
+                                        let value: serde_json::Value = serde_json::from_str(&text).expect("Failed to deserialize into value !!!!");
+                                        // println!("[[TRANSACTION DATA]]{:#?}", value);
                                         match serde_json::from_value::<RpcResponse>(value) {
                                             Ok(tx) => {
-                                                // println!("DESERIALIZED TRANSACTION {:?}. PREPARING SUMMARY", tx);
                                                 if let Some(result) = tx.result {
+                                                    let mut transfer_checked_instructions: Vec<TransferCheckedInfo> = Vec::new();
                                                     let pre: Vec<TokenBalance> = result.clone().meta.pre_token_balances;
-                                                    let post: Vec<TokenBalance> = result.meta.post_token_balances;
+                                                    let post: Vec<TokenBalance> = result.clone().meta.post_token_balances;
 
-                                                    prepare_transaction_summary(signature, pre, post);
+                                                    let inner_instructions = result.clone().meta.inner_instructions;
+                                                    for inner_instruction in inner_instructions {
+                                                        for instruction in inner_instruction.instructions {
+                                                            if let Ok(transfer_checked) = serde_json::from_value::<TransferChecked>(instruction) {
+                                                                if transfer_checked.parsed.as_ref().map_or(false, |p| p.instruction_type == "transferChecked") {
+                                                                    // Found a TransferChecked instruction
+                                                                    let transfer_info = transfer_checked.parsed.unwrap().info;
+                                                                    // println!("[[TRANSFER CHECKED INFO]] {:?}", transfer_info);
+                                                                    transfer_checked_instructions.push(transfer_info);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                     match prepare_transaction_summary(signature, pre, post, transfer_checked_instructions).await {
+                                                         Ok(_) => {continue}
+                                                         Err(_) => {continue}
+                                                     }
                                                 } else {
-                                                    eprintln!("TX YIELDED NO RESULT. ")
+                                                    continue;
                                                 }
                                             }
                                             Err(e) => eprintln!("Error deserializing transaction {:?}", e),
@@ -287,47 +308,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// https://developers.metaplex.com/token-metadata
+pub struct Metadata {
+    pub key: Key,
+    pub update_authority: Pubkey,
+    pub mint: Pubkey,
+    pub data: Data,
+    pub primary_sale_happened: bool,
+    pub is_mutable: bool,
+    // ...
+}
 
-fn prepare_transaction_summary(signature: String, pre_token_balances: Vec<TokenBalance>, post_token_balances: Vec<TokenBalance>) -> Vec<TransactionSummary> {
+
+async fn prepare_transaction_summary(
+    signature: String,
+    pre_token_balances: Vec<TokenBalance>,
+    post_token_balances: Vec<TokenBalance>,
+    transfer_checked_info: Vec<TransferCheckedInfo>
+) -> Result<Vec<TxCheckedSummary>, Box<dyn Error>> {
     let mut summaries = Vec::new();
-    let mut balance_map = HashMap::new();
+    let client = Client::new();
+    let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP")
+        .expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
+    for transfer_info in transfer_checked_info {
+        //track known addresses
+        let mut known_addresses = HashMap::new();
+        known_addresses.insert("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", ("USDC", "USD Coin"));
+        known_addresses.insert("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", ("USDT", "USD Token"));
 
-    // Populate balance_map with pre token balances
-    for pre_balance in pre_token_balances {
-        let key = (pre_balance.mint.clone(), pre_balance.owner.clone());
-        let amount = pre_balance.ui_token_amount.amount.parse::<f64>().unwrap_or(0.0);
-        balance_map.insert(key, amount);
-    }
 
-    // Iterate through post token balances and calculate deltas
-    for post_balance in post_token_balances {
-        let key = (post_balance.mint.clone(), post_balance.owner.clone());
-        let post_amount = post_balance.ui_token_amount.amount.parse::<f64>().unwrap_or(0.0);
+        let metadata_response = client
+            .post(&solana_private_http_url)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getAccountInfo",
+                "params": [
+                    transfer_info.mint,
+                    {
+                        "encoding": "jsonParsed",
+                    }
+                ]
+            }))
+            .send()
+            .await?;
 
-        let pre_amount = balance_map.get(&key).unwrap_or(&0.0);
-        let delta = post_amount.clone() - pre_amount;
-
-        // Update the balance map to reflect the post balance for comparison in future transactions
-        balance_map.insert(key.clone(), post_amount);
-
-        if delta != 0.0 {
-            let summary = TransactionSummary {
-                signature: signature.to_string(),
-                program_id: post_balance.program_id.clone(),
-                amount_delta: delta,
-                mint: post_balance.mint.clone(),
-                owner: post_balance.owner.clone(),
-                token_name: "Placeholder".to_string(), // Placeholder for token name
-                token_symbol: "Placeholder".to_string(), // Placeholder for token symbol
-            };
-            println!("{}", summary);
-            println!("----------------------------------------");
-            println!("----------------------------------------");
-            println!("----------------------------------------");
-            summaries.push(summary);
+        if metadata_response.status().is_success() {
+            let response_text = metadata_response.text().await?;
+            let value: serde_json::Value = serde_json::from_str(&response_text)?;
+            println!("{:#?}", value);
         }
+
+        // Consider retrieving actual token name and symbol using the mint address
+        let summary = TxCheckedSummary {
+            signature: signature.clone(),
+            transaction_type: "Confirmed Transfer".to_string(),
+            source: transfer_info.source,
+            destination: transfer_info.destination,
+            mint: transfer_info.mint,
+            token_name: "Placeholder".to_string(),
+            token_symbol: "Placeholder".to_string(),
+            token_amount: Option::from(transfer_info.token_amount.ui_amount.unwrap_or_default()),
+        };
+
+        println!("{}", summary);
+        summaries.push(summary);
     }
-    summaries
+
+    Ok(summaries)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -383,7 +431,44 @@ pub struct UiTokenAmount {
 #[serde(rename_all = "camelCase")]
 pub struct InnerInstruction {
     index: u64,
-    instructions: Vec<Value>, // Placeholder for actual instruction structure
+    instructions: Vec<Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferChecked {
+    pub program: String,
+    pub program_id: String,
+    pub parsed: Option<TransferCheckedInstruction>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferCheckedInstruction {
+    #[serde(rename = "type")]
+    pub instruction_type: String,
+    pub info: TransferCheckedInfo,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferCheckedInfo {
+    pub authority: String,
+    pub destination: String,
+    pub mint: String,
+    pub source: String,
+    pub token_amount: TokenAmount,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenAmount {
+    pub amount: String,
+    pub decimals: u8,
+    #[serde(rename = "uiAmount")]
+    pub ui_amount: Option<f64>,
+    #[serde(rename = "uiAmountString")]
+    pub ui_amount_string: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
