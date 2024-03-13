@@ -124,8 +124,7 @@ async fn process_mint_addresses(mint_addresses: Vec<String>) -> Result<Vec<Holde
             let response_text = response.text().await?;
 
             // TODO most useful print ever
-            //let value: se
-            // rde_json::Value = serde_json::from_str(&response_text)?;
+            //let value: serde_json::Value = serde_json::from_str(&response_text)?;
             // println!("{:#?}", value);
 
             match serde_json::from_str::<SolanaRpcResponse>(&response_text) {

@@ -81,6 +81,7 @@ impl<B: SubscriptionBuilder> WebSocketSubscriber<B> {
 }
 
 pub struct SolanaSubscriptionBuilder;
+
 impl SubscriptionBuilder for SolanaSubscriptionBuilder {
     fn build_subscription_messages(params: &[(&str, Vec<String>)]) -> Vec<Message> {
         params.iter().map(|&(method, ref args)| {
@@ -99,7 +100,7 @@ impl SubscriptionBuilder for SolanaSubscriptionBuilder {
                             }
                         ]
                     })
-                },
+                }
                 "logsSubscribe" => {
                     if args.is_empty() || args[0] == "all" {
                         // Subscribe to all transactions except for simple vote transactions
@@ -118,7 +119,7 @@ impl SubscriptionBuilder for SolanaSubscriptionBuilder {
                             "params": ["allWithVotes"]
                         })
                     } else {
-                        // Subscribe to transactions mentioning a specific program ID
+                        println!("[[SUBSCRIBER]] SUBSCRIBING TO LOGS");
                         json!({
                             "jsonrpc": "2.0",
                             "id": 1,
@@ -133,7 +134,7 @@ impl SubscriptionBuilder for SolanaSubscriptionBuilder {
                             ]
                         })
                     }
-                },
+                }
 
                 "programSubscribe" => {
                     let program_id = args.get(0).expect("Program ID is required");
@@ -158,7 +159,7 @@ impl SubscriptionBuilder for SolanaSubscriptionBuilder {
                             }
                         ]
                     })
-                },
+                }
                 _ => panic!("Unsupported subscription method: {}", method),
             };
             Message::Text(message.to_string())

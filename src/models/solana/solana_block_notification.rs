@@ -33,13 +33,12 @@ struct BlockValue {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Block {
-    previousBlockhash: String,
+    previous_blockhash: String,
     blockhash: String,
-    parentSlot: u64,
+    parent_slot: u64,
     transactions: Vec<Transaction>,
-    // Add more fields as necessary
-    blockTime: Option<u64>,
-    blockHeight: Option<u64>,
+    block_time: Option<u64>,
+    block_height: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -53,13 +52,13 @@ struct TransactionMeta {
     err: Option<Value>,
     status: TransactionStatus,
     fee: u64,
-    preBalances: Vec<u64>,
-    postBalances: Vec<u64>,
-    innerInstructions: Vec<InnerInstruction>,
+    pre_balances: Vec<u64>,
+    post_balances: Vec<u64>,
+    inner_instructions: Vec<InnerInstruction>,
     // Add more fields as necessary
-    logMessages: Option<Vec<String>>,
-    preTokenBalances: Option<Vec<TokenBalance>>,
-    postTokenBalances: Option<Vec<TokenBalance>>,
+    log_messages: Option<Vec<String>>,
+    pre_token_balances: Option<Vec<TokenBalance>>,
+    post_token_balances: Option<Vec<TokenBalance>>,
     rewards: Option<Vec<Value>>,
 }
 
@@ -76,24 +75,24 @@ struct InnerInstruction {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct InstructionDetail {
-    programIdIndex: u8,
+    program_id_index: u8,
     accounts: Vec<u8>,
     data: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TokenBalance {
-    accountIndex: u8,
+    account_index: u8,
     mint: String,
-    uiTokenAmount: UiTokenAmount,
+    ui_token_amount: UiTokenAmount,
     owner: String,
-    programId: String,
+    program_id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct UiTokenAmount {
-    uiAmount: Option<f64>,
+    ui_amount: Option<f64>,
     decimals: u8,
     amount: String,
-    uiAmountString: String,
+    ui_amount_string: String,
 }
