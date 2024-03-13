@@ -141,7 +141,7 @@
 //
 // fn is_initialize_mint(instruction: &Value) -> bool {
 //     // Implement logic to check if the instruction is an InitializeMint instruction
-//     // This involves checking the programId and the instruction data format
+//     // This involves checking the program_id and the instruction data format
 //     true
 // }
 //
