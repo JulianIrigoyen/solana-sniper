@@ -21,6 +21,7 @@ use crossbeam_channel::{bounded, Sender};
 use dotenv::dotenv;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use reqwest::Client;
+use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use timely::dataflow::InputHandle;
 use timely::dataflow::operators::{Filter, Input, Inspect};
@@ -63,17 +64,6 @@ mod decoder;
 Welcome to the Solana Sniper.
 
  */
-
-
-// Supervisor actor that spawns signature processors or manages a pool of them
-
-// Message to instruct the supervisor to process a signature
-#[derive(Message)]
-#[rtype(result = "()")]
-struct ProcessSignature {
-    signature: String,
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
@@ -84,24 +74,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let db_session_manager = Arc::new(DbSessionManager::new(&database_url));
 
-
     // Websocket Server Initialization
     let ws_host = env::var("WS_SERVER_HOST").expect("WS_HOST must be set");
     let ws_port = env::var("WS_SERVER_PORT").expect("WS_PORT must be set");
     let ws_server_task = tokio::spawn(async move {
         let ws_server = ws_server::WebSocketServer::new(ws_host, ws_port);
+        //TODO
         // ws_server.run().await
     });
 
     let solana_public_ws_url = String::from("wss://api.mainnet-beta.solana.com");
-    let solana_private_ws_url = env::var("PRIVATE_SOLANA_QUICKNODE_WS").expect("PRIVATE_SOLANA_QUICKNODE_WS must be set");
-    let client = Client::new();
-    let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP").expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
-
-
+    let solana_private_ws_url =
+        env::var("PRIVATE_SOLANA_QUICKNODE_WS").expect("PRIVATE_SOLANA_QUICKNODE_WS must be set");
+    let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP")
+        .expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
 
     // api key is provided in the path
-    // let solana_api_key = env::var("ALCHEMY_SOLANA_API_KEY").expect("ALCHEMY_SOLANA_API_KEY must be set");
     let (mut solana_ws_stream, _) = connect_async(solana_public_ws_url.clone()).await?;
     println!("Connected to Solana WebSocket");
 
@@ -114,9 +102,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         SolanaSubscriptionBuilder,
     );
 
+    // ------------ PROGRAM SUBSCRIPTION ------------
     let subscription_program_ids = vec![
-        "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",      // WIF
-        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",     // BONK
+        "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", // WIF
+        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK
         "HJ39rRZ6ys22KdB3USxDgNsL7RKiQmsC3yL8AS3Suuku", // UPDOG
     ];
 
@@ -127,19 +116,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             vec![
                 id.to_string(),
                 json!({
-                "encoding": "jsonParsed",
-                "commitment": "finalized"
-            }).to_string(),
+                    "encoding": "jsonParsed",
+                    "commitment": "finalized"
+                })
+                    .to_string(),
             ],
         );
         sub_program_params.push(param);
     }
 
+    // ------------ ACCOUNT SUBSCRIPTION ------------
     let account_program_ids: Vec<String> = vec![
         ("FJRZ5sTp27n6GhUVqgVkY4JGUJPjhRPnWtH4du5UhKbw".to_string()), //whale de miglio
         ("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1".to_string()), //raydium
-        ("11111111111111111111111111111111".to_string()), //system program
-        ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string()), //token program
+        ("11111111111111111111111111111111".to_string()),             //system program
+        ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string()),  //token program
     ];
 
     let sub_accounts_message =
@@ -160,7 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Subscribing to ACCOUNTS on  {} with provided messages :: {:?}", solana_private_ws_url.clone(), sub_accounts_message.clone());
     solana_ws_stream.send(Message::Text(sub_accounts_message)).await?;
 
-
+    // ------------ LOG SUBSCRIPTION ------------
     let raydium_public_key = "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX";
     let miglio_whale = "FJRZ5sTp27n6GhUVqgVkY4JGUJPjhRPnWtH4du5UhKbw";
     let a_whale = "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa";
@@ -203,21 +194,124 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         consume_stream::<SolanaEventTypes>(&mut solana_ws_stream, solana_event_sender).await;
     });
 
-    let new_token_tracker = Arc::new(Mutex::new(NewTokenTracker::new()));
+    //let new_token_tracker = Arc::new(Mutex::new(NewTokenTracker::new()));
     let solana_db_session_manager = db_session_manager.clone();
+    let client = Client::new();
 
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct RpcResponse {
+        id: u64,
+        jsonrpc: String,
+        result: Option<ResultField>,
+        block_time: Option<u64>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    struct ResultField {
+        meta: Meta,
+        transaction: Transaction,
+        slot: u64,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct Meta {
+        err: Option<Value>,
+        fee: u64,
+        inner_instructions: Vec<InnerInstruction>,
+        post_balances: Vec<u64>,
+        post_token_balances: Vec<TokenBalance>,
+        pre_balances: Vec<u64>,
+        pre_token_balances: Vec<TokenBalance>,
+        rewards: Vec<Value>,
+        status: Status,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct TokenBalance {
+        account_index: u64,
+        mint: String,
+        owner: String,
+        program_id: String,
+        ui_token_amount: UiTokenAmount,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct UiTokenAmount {
+        amount: String,
+        decimals: u8,
+        ui_amount: Option<f64>,
+        ui_amount_string: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct InnerInstruction {
+        index: u64,
+        instructions: Vec<Value>, // Placeholder for actual instruction structure
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    struct Status {
+        ok: Option<Value>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct TransactionMessage {
+        account_keys: Vec<AccountKey>,
+        instructions: Vec<Value>,
+        recent_blockhash: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct AccountKey {
+        pubkey: String,
+        signer: bool,
+        writable: bool,
+    }
+
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    struct Transaction {
+        message: TransactionMessage,
+        signatures: Vec<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct Header {
+        num_readonly_signed_accounts: u8,
+        num_readonly_unsigned_accounts: u8,
+        num_required_signatures: u8,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct InstructionData {
+        accounts: Vec<u8>,
+        data: String,
+        program_id_index: Option<u8>,
+    }
+
+    ///PROCESS DESERIALIZED SOLANA EVENTS
     let solana_task = tokio::spawn(async move {
         while let Ok(event) = solana_event_receiver.recv() {
-            // println!("[[SOLANA TASK]] got event {:?}", event);
             match event {
                 SolanaEventTypes::LogNotification(ref log) => {
-
                     // println!("[[SOLANA TASK]] Processing log with signature {:?}", event);
                     if log.params.result.value.err.is_none() {
-                        // If there are no errors, print the event and extract the signature
                         let signature = log.params.result.value.signature.clone();
-                        println!("[[SOLANA TASK]] SUCCESSFUL TRANSACTION Signature: {}", signature);
-                        // Here's where you make the HTTP request
+                        println!(
+                            "[[SOLANA TASK]] SUCCESSFUL TRANSACTION Signature: {}",
+                            signature
+                        );
+
+                        //get transaction with received signature
                         let transaction_response = client
                             .post(&solana_private_http_url)
                             .json(&json!({
@@ -228,7 +322,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     signature,
                                     {
                                         "encoding": "jsonParsed",
-                                        "maxSupportedTransactionVersion": 0 
+                                        "maxSupportedTransactionVersion": 0
                                     }
                                 ]
                             }))
@@ -237,28 +331,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         if let Ok(response) = transaction_response {
                             if response.status().is_success() {
-                                match response.text().await {  // Properly await and match the result
-                                    Ok(text) => {  // `text` is of type `String` here
-                                        // Now you can use `text` as a `String`
-                                        match serde_json::from_str::<serde_json::Value>(&text) {
-                                            Ok(value) => println!("[[SOLANA TASK]] FOUND TRANSACTION: {:#?}", value),
-                                            Err(e) => eprintln!("Failed to deserialize transaction: {:?}", e),
+                                match response.text().await {
+                                    Ok(text) => {
+                                        let value: serde_json::Value = serde_json::from_str(&text)
+                                            .expect("Failed to deserialize into value !!!!");
+                                        println!("{:#?}", value);
+                                        match serde_json::from_value::<RpcResponse>(value) {
+                                            Ok(tx) => {
+                                                println!("DESERIALIZED TRANSACTION {:?}", tx)
+                                            }
+                                            Err(e) => eprintln!("Error deserializing transaction {:?}", e),
                                         }
+
                                     },
                                     Err(e) => eprintln!("Failed to read response text: {:?}", e),
                                 }
                             } else {
-                                // If the response status is not successful, log the status
-                                eprintln!("Error fetching transaction details: {:?}", response.status());
+                                eprintln!("Error fetching transaction details: {:?}", response);
                             }
                         } else {
-                            eprintln!("Failed to send the request or receive the response");
+                            eprintln!("Could not get transaction for signature: {:?}", signature);
                         }
-
-
                     }
-
                 }
+
                 SolanaEventTypes::AccountNotification(notification) => {
                     let signature = notification;
                     println!("[[SOLANA TASK]] GOT ACCOUNT NOTIFICATION {:?}", signature)
@@ -272,26 +368,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _ = server::http_server::run_server().await;
 
-
-    match tokio::try_join!(ws_server_task, solana_ws_message_processing_task, solana_task) {
+    match tokio::try_join!(
+        ws_server_task,
+        solana_ws_message_processing_task,
+        solana_task
+    ) {
         Ok(_) => println!("All tasks completed successfully"),
         Err(e) => eprintln!("A task exited with an error: {:?}", e),
     }
-    
-
 
     Ok(())
 }
-
-async fn fetch_transaction_details(signature: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    // Implement the logic to fetch transaction details using the signature
-    // This will likely involve making an HTTP request to the Solana JSON RPC API
-    println!("GETTING TX FOR {:?}", signature);
-    Ok(serde_json::Value::Null) // Placeholder
-}
-//
-// async fn fetch_token_metadata(account: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-//     // Implement the logic to fetch token metadata
-//     // This might involve querying the Metaplex token metadata program, for example
-//     Ok(serde_json::Value::Null) // Placeholder
-// }
