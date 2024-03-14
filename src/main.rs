@@ -116,11 +116,13 @@ async fn heartbeat(
     }
 }
 
-async fn reconnect(ws_stream: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>) -> Result<(), String> {
-    // This should include creating a new WebSocket connection and replacing the old one in `ws_stream`
-    // Returning Ok or Err based on the outcome of the reconnection attempt
-    warn!("Reconnection logic goes here");
-    Err("Reconnection logic not implemented".to_string())
+async fn reconnect(ws_stream: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>) -> Result<(), Box<dyn Error>> {
+    // Logic to create a new WebSocket connection
+    let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP").expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
+    let (new_ws_stream, _) = connect_async(solana_private_http_url).await?;
+    let mut lock = ws_stream.lock().await;
+    *lock = new_ws_stream;
+    Ok(())
 }
 
 
@@ -155,9 +157,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Connected to Solana WebSocket");
 
     // let shared_stream = Arc::new(Mutex::new(solana_ws_stream));
-
     // Share the Arc<Mutex<WebSocketStream>> with the heartbeat task
     // let heartbeat_stream = shared_stream.clone();
+    // // Share the Arc<Mutex<WebSocketStream>> with the heartbeat task
+    // let heartbeat_stream = shared_stream.clone();
+    // let stream_for_consuming = shared_stream.clone();
 
 
     //https://solana.com/docs/rpc/websocket/accountsubscribe
@@ -258,13 +262,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Subscribing to LOG NOTIFICATIONS on {} with provided messages :: {:?}", solana_private_ws_url.clone(), sub_logs_messages.clone());
     solana_ws_stream.send(Message::Text(sub_logs_messages)).await?;
-
     // ------------ CHANNEL CREATION ------------
     let (solana_event_sender, mut solana_event_receiver) =
         bounded::<SolanaEventTypes>(5000);
 
+        let sender_clone = solana_event_sender.clone();
+
     let solana_ws_message_processing_task = tokio::spawn(async move {
-        consume_stream::<SolanaEventTypes>(&mut solana_ws_stream, solana_event_sender).await;
+        consume_stream::<SolanaEventTypes>(&mut solana_ws_stream, sender_clone).await;
     });
 
     let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP")
@@ -374,7 +379,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-
+    // println!("Spawning heartbeat task...");
+    // let do_heartbeats = tokio::spawn( async move {
+    //     heartbeat(heartbeat_stream, last_activity.clone()).await
+    // });
     let _ = server::http_server::run_server().await;
 
     // let do_heartbeats = tokio::spawn( async move {
@@ -385,107 +393,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ws_server_task,
         solana_ws_message_processing_task,
         solana_task,
-        // do_heartbeats
+        // do_heartbeats //TODO impl recovery
     ) {
         Ok(_) => println!("All tasks completed successfully"),
         Err(e) => eprintln!("A task exited with an error: {:?}", e),
     }
-
     Ok(())
 }
 
 // https://developers.metaplex.com/token-metadata
-async fn prepare_transaction_summary(
+
+
+async fn prepare_transaction_summary_2(
     signature: String,
     tracked_whale: String,
     pre_token_balances: Vec<TokenBalance>,
     post_token_balances: Vec<TokenBalance>,
-    transfer_checked_info: Vec<TransferCheckedInfo>
-) -> Result<Vec<TxCheckedSummary>, Box<dyn Error>> {
-    let mut summaries = Vec::new();
-    let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP")
-        .expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
+) -> Result<Vec<TxCheckedSummary>, Box<dyn std::error::Error>> {
+    let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP").expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
     let client = RpcClient::new(solana_private_http_url);
 
-    //track known addresses
-    let mut known_addresses = HashMap::new();
-    known_addresses.insert("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", ("USDC", "USD Coin"));
-    known_addresses.insert("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", ("USDT", "USD Token"));
-    known_addresses.insert("So11111111111111111111111111111111111111112", ("SOL", "Wrapped SOL"));
+    let balance_changes = aggregate_balance_changes(pre_token_balances.clone(), post_token_balances.clone(), &tracked_whale).await?;
+    // e.g., changes must be greater than or equal to 1.0 tokens (trying to avoid micro transactions for 0.0000....n USDT/USDC/SOL
+    let significance_threshold = 1.0;
 
-    // Determine buy or sell
-    let mut activity_detail = String::new();
+    let significant_changes: Vec<&BalanceChange> = balance_changes.iter()
+        .filter(|change| change.change.abs() >= significance_threshold)
+        .collect();
 
-    let pre_balance = pre_token_balances.iter()
-        .find(|balance| balance.owner == tracked_whale);
-    let post_balance = post_token_balances.iter()
-        .find(|balance| balance.owner == tracked_whale);
-
-    if let (Some(pre), Some(post)) = (pre_balance, post_balance) {
-        let pre_amount = pre.ui_token_amount.ui_amount.unwrap_or(0.0);
-        let post_amount = post.ui_token_amount.ui_amount.unwrap_or(0.0);
-
-        if post_amount > pre_amount {
-            activity_detail = format!("{} bought {:.2} tokens", tracked_whale, post_amount - pre_amount);
-        } else if pre_amount > post_amount {
-            activity_detail = format!("{} sold {:.2} tokens", tracked_whale, pre_amount - post_amount);
-        }
+    if significant_changes.is_empty() {
+        // Handle case with no significant changes if necessary
+        return Ok(vec![]);
     }
 
-    // println!("{:?}", activity_detail);
+    let mut summaries: Vec<TxCheckedSummary> = vec![];
 
-    for transfer_info in transfer_checked_info {
+    for change in significant_changes.iter() {
+        let token_name: String;
+        let token_symbol: String;
 
-        if known_addresses.contains_key(&*transfer_info.mint) {
-            // If the mint is known, skip fetching metadata and printing summary
-            //todo suele ser ruido / internal transfers
-            continue;
+        // Fetch token metadata
+        match fetch_token_metadata(&client, &change.mint).await {
+            Ok(metadata) => {
+                token_name = metadata.0;
+                token_symbol = metadata.1;
+            }
+            Err(e) => {
+                eprintln!("Error while fetching token metadata: {:?}", e);
+                token_name = "Unknown".to_string();
+                token_symbol = "Unknown".to_string();
+            }
         }
 
-        let metadata_program_id = &ID;
-        let token_mint_address = Pubkey::from_str(transfer_info.mint.as_str()).unwrap();
-        let (metadata_account_address, _) = Pubkey::find_program_address(
-            &[
-                b"metadata",
-                metadata_program_id.as_ref(),
-                token_mint_address.as_ref(),
-            ],
-            &metadata_program_id,
+        let transaction_type = if change.change < 0.0 { "Sale" } else { "Purchase" };
+        let description = format!(
+            "{} {} {:.2} {} ({})",
+            tracked_whale,
+            transaction_type,
+            change.change.abs(),
+            token_name,
+            token_symbol
         );
-
-        // Attempt to fetch and deserialize the account data for the metadata account
-        let account_data_result = client.get_account_data(&metadata_account_address);
-        let (token_name, token_symbol) = match account_data_result {
-            Ok(account_data) => match Metadata::from_bytes(&account_data) {
-                Ok(metadata) => {
-                    // println!("[[METADATA]] {:?}", metadata);
-                    (metadata.name, metadata.symbol)
-                },
-                Err(e) => {
-                    eprintln!("Error while parsing metadata: {:?}", e);
-                    // Default to "Unknown" if there's an error parsing metadata
-                    ("Unknown".to_string(), "Unknown".to_string())
-                }
-            },
-            Err(e) => {
-                eprintln!("Failed to fetch account data: {:?}", e);
-                // Same
-                ("Unknown".to_string(), "Unknown".to_string())
-            }
-        };
 
         let summary = TxCheckedSummary {
             signature: signature.clone(),
-            transaction_type: "Confirmed Transfer".to_string(),
-            source: transfer_info.source.clone(),
-            destination: transfer_info.destination.clone(),
-            mint: transfer_info.mint.clone(),
+            transaction_type: transaction_type.to_string(),
+            source: "N/A".to_string(),
+            destination: "N/A".to_string(),
+            mint: change.mint.clone(),
             token_name,
             token_symbol,
-            token_amount: Some(transfer_info.token_amount.ui_amount.unwrap_or(0.0)),
-            detail: activity_detail.clone()
+            token_amount: Some(change.change.abs()),
+            detail: description,
         };
-
         println!("{}", summary);
         println!("------------------------------------------------------------");
         println!("------------------------------------------------------------");
@@ -495,96 +475,24 @@ async fn prepare_transaction_summary(
     Ok(summaries)
 }
 
-
-    async fn prepare_transaction_summary_2(
-        signature: String,
-        tracked_whale: String,
-        pre_token_balances: Vec<TokenBalance>,
-        post_token_balances: Vec<TokenBalance>,
-    ) -> Result<Vec<TxCheckedSummary>, Box<dyn std::error::Error>> {
-        let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP").expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
-        let client = RpcClient::new(solana_private_http_url);
-
-        let balance_changes = aggregate_balance_changes(pre_token_balances.clone(), post_token_balances.clone(), &tracked_whale).await?;
-        // e.g., changes must be greater than or equal to 1.0 tokens (trying to avoid micro transactions for 0.0000....n USDT/USDC/SOL
-        let significance_threshold = 1.0;
-
-        let significant_changes: Vec<&BalanceChange> = balance_changes.iter()
-            .filter(|change| change.change.abs() >= significance_threshold)
-            .collect();
-
-        if significant_changes.is_empty() {
-            // Handle case with no significant changes if necessary
-            return Ok(vec![]);
-        }
-
-        let mut summaries: Vec<TxCheckedSummary> = vec![];
-
-        for change in significant_changes.iter() {
-            let token_name: String;
-            let token_symbol: String;
-
-            // Fetch token metadata
-            match fetch_token_metadata(&client, &change.mint).await {
-                Ok(metadata) => {
-                    token_name = metadata.0;
-                    token_symbol = metadata.1;
-                }
-                Err(e) => {
-                    eprintln!("Error while fetching token metadata: {:?}", e);
-                    token_name = "Unknown".to_string();
-                    token_symbol = "Unknown".to_string();
-                }
-            }
-
-            let transaction_type = if change.change < 0.0 { "Sale" } else { "Purchase" };
-            let description = format!(
-                "{} {} {:.2} {} ({})",
-                tracked_whale,
-                transaction_type,
-                change.change.abs(),
-                token_name,
-                token_symbol
-            );
-
-            let summary = TxCheckedSummary {
-                signature: signature.clone(),
-                transaction_type: transaction_type.to_string(),
-                source: "N/A".to_string(),
-                destination: "N/A".to_string(),
-                mint: change.mint.clone(),
-                token_name,
-                token_symbol,
-                token_amount: Some(change.change.abs()),
-                detail: description,
-            };
-            println!("{}", summary);
-            println!("------------------------------------------------------------");
-            println!("------------------------------------------------------------");
-            summaries.push(summary);
-        }
-
-        Ok(summaries)
-}
-
 async fn fetch_token_metadata(client: &RpcClient, mint: &String) ->  Result<(String, String), Box<dyn std::error::Error>> {
-    let metadata_program_id = &ID;
-    let token_mint_address = Pubkey::from_str(mint.as_str()).unwrap();
-    let (metadata_account_address, _) = Pubkey::find_program_address(
-        &[
-            b"metadata",
-            metadata_program_id.as_ref(),
-            token_mint_address.as_ref(),
-        ],
-        &metadata_program_id,
-    );
+let metadata_program_id = &ID;
+let token_mint_address = Pubkey::from_str(mint.as_str()).unwrap();
+let (metadata_account_address, _) = Pubkey::find_program_address(
+    &[
+        b"metadata",
+        metadata_program_id.as_ref(),
+        token_mint_address.as_ref(),
+    ],
+    &metadata_program_id,
+);
 
 
-    let account_data = client.get_account_data(&metadata_account_address)?;
-    let metadata = Metadata::from_bytes(&account_data)
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+let account_data = client.get_account_data(&metadata_account_address)?;
+let metadata = Metadata::from_bytes(&account_data)
+    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
-    Ok((metadata.name, metadata.symbol))
+Ok((metadata.name, metadata.symbol))
 }
 
 // Function to aggregate balance changes between pre and post token balances
@@ -772,4 +680,103 @@ pub struct InstructionData {
     accounts: Vec<u8>,
     data: String,
     program_id_index: Option<u8>,
+}
+async fn prepare_transaction_summary(
+    signature: String,
+    tracked_whale: String,
+    pre_token_balances: Vec<TokenBalance>,
+    post_token_balances: Vec<TokenBalance>,
+    transfer_checked_info: Vec<TransferCheckedInfo>
+) -> Result<Vec<TxCheckedSummary>, Box<dyn Error>> {
+    let mut summaries = Vec::new();
+    let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP")
+        .expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
+    let client = RpcClient::new(solana_private_http_url);
+
+    //track known addresses
+    let mut known_addresses = HashMap::new();
+    known_addresses.insert("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", ("USDC", "USD Coin"));
+    known_addresses.insert("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", ("USDT", "USD Token"));
+    known_addresses.insert("So11111111111111111111111111111111111111112", ("SOL", "Wrapped SOL"));
+
+    // Determine buy or sell
+    let mut activity_detail = String::new();
+
+    let pre_balance = pre_token_balances.iter()
+        .find(|balance| balance.owner == tracked_whale);
+    let post_balance = post_token_balances.iter()
+        .find(|balance| balance.owner == tracked_whale);
+
+    if let (Some(pre), Some(post)) = (pre_balance, post_balance) {
+        let pre_amount = pre.ui_token_amount.ui_amount.unwrap_or(0.0);
+        let post_amount = post.ui_token_amount.ui_amount.unwrap_or(0.0);
+
+        if post_amount > pre_amount {
+            activity_detail = format!("{} bought {:.2} tokens", tracked_whale, post_amount - pre_amount);
+        } else if pre_amount > post_amount {
+            activity_detail = format!("{} sold {:.2} tokens", tracked_whale, pre_amount - post_amount);
+        }
+    }
+
+    // println!("{:?}", activity_detail);
+
+    for transfer_info in transfer_checked_info {
+
+        if known_addresses.contains_key(&*transfer_info.mint) {
+            // If the mint is known, skip fetching metadata and printing summary
+            //todo suele ser ruido / internal transfers
+            continue;
+        }
+
+        let metadata_program_id = &ID;
+        let token_mint_address = Pubkey::from_str(transfer_info.mint.as_str()).unwrap();
+        let (metadata_account_address, _) = Pubkey::find_program_address(
+            &[
+                b"metadata",
+                metadata_program_id.as_ref(),
+                token_mint_address.as_ref(),
+            ],
+            &metadata_program_id,
+        );
+
+        // Attempt to fetch and deserialize the account data for the metadata account
+        let account_data_result = client.get_account_data(&metadata_account_address);
+        let (token_name, token_symbol) = match account_data_result {
+            Ok(account_data) => match Metadata::from_bytes(&account_data) {
+                Ok(metadata) => {
+                    // println!("[[METADATA]] {:?}", metadata);
+                    (metadata.name, metadata.symbol)
+                },
+                Err(e) => {
+                    eprintln!("Error while parsing metadata: {:?}", e);
+                    // Default to "Unknown" if there's an error parsing metadata
+                    ("Unknown".to_string(), "Unknown".to_string())
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to fetch account data: {:?}", e);
+                // Same
+                ("Unknown".to_string(), "Unknown".to_string())
+            }
+        };
+
+        let summary = TxCheckedSummary {
+            signature: signature.clone(),
+            transaction_type: "Confirmed Transfer".to_string(),
+            source: transfer_info.source.clone(),
+            destination: transfer_info.destination.clone(),
+            mint: transfer_info.mint.clone(),
+            token_name,
+            token_symbol,
+            token_amount: Some(transfer_info.token_amount.ui_amount.unwrap_or(0.0)),
+            detail: activity_detail.clone()
+        };
+
+        println!("{}", summary);
+        println!("------------------------------------------------------------");
+        println!("------------------------------------------------------------");
+        summaries.push(summary);
+    }
+
+    Ok(summaries)
 }
