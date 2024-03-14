@@ -3,18 +3,22 @@ use crossbeam_channel::Sender;
 use futures_util::StreamExt;
 use serde_json::Value;
 use std::error::Error as StdError;
+use tokio_tungstenite::tungstenite::Error as WsError;
+use stream_reconnect::ReconnectStream;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, WebSocketStream, MaybeTlsStream};
 use tungstenite::Error;
+use crate::SolanaWebSocket;
 
 use crate::subscriber::websocket_event_types::WebsocketEventTypes;
 
 
 pub async fn consume_stream<T: WebsocketEventTypes + Send + 'static>(
-    ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    reconnect_stream: &mut ReconnectStream<SolanaWebSocket, String, Result<Message, WsError>, WsError>,
+    // ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
     tx: Sender<T>,
 ) {
-    while let Some(message) = ws_stream.next().await {
+    while let Some(message) = reconnect_stream.next().await {
         // println!("Got message message: {:?}", message);
         match message {
 
