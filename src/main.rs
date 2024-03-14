@@ -18,7 +18,6 @@ use std::{env, thread};
 use std::collections::HashMap;
 use std::error::Error;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 use std::task::Context;
 use std::time::Duration;
 
@@ -32,10 +31,17 @@ use timely::dataflow::InputHandle;
 use timely::dataflow::operators::{Filter, Input, Inspect};
 use timely::execute_from_args;
 use timely::worker::Worker;
+use tokio::sync::Mutex;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::TcpStream;
+use tokio::time::{interval as tokio_interval, Duration as TokioDuration, Instant};
 use tokio_tungstenite::{
     connect_async, MaybeTlsStream, tungstenite::protocol::Message, WebSocketStream,
 };
+
+use log::{info, warn, error};
+
 use url::Url;
 use crate::db::db_session_manager::DbSessionManager;
 
@@ -43,9 +49,7 @@ use crate::models::solana::solana_event_types::SolanaEventTypes;
 use crate::models::solana::alchemy::get_program_accounts::ProgramAccountsResponse;
 use crate::server::ws_server;
 use crate::subscriber::websocket_subscriber::{WebSocketSubscriber, AuthMethod, SolanaSubscriptionBuilder};
-// use crate::util::event_filters::{
-//     EventFilters, FilterCriteria, FilterValue, ParameterizedFilter,
-// };
+
 use crate::subscriber::consume_stream::{consume_stream};
 use crate::trackers::raydium::new_token_tracker;
 use crate::trackers::raydium::new_token_tracker::NewTokenTracker;
@@ -56,6 +60,7 @@ use mpl_token_metadata::ID;
 
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
+use tokio::time;
 use tokio::time::interval;
 use crate::models::solana::solana_account_notification::SolanaAccountNotification;
 use crate::models::solana::solana_transaction::{TransactionSummary, TxCheckedSummary};
@@ -74,10 +79,58 @@ mod scraper;
 
 
 /** Welcome to the Solana Sniper */
+
+async fn heartbeat(
+    ws_stream: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>,
+    last_activity: Arc<AtomicU64>,
+) {
+    let mut interval = time::interval(Duration::from_secs(5));
+    loop {
+        info!("[[HEARTBEAT]] <3  <3  <3  <3  <3  <3  <3  <3  <3  <3  <3  <3  <3 ");
+        interval.tick().await;
+        // Check for inactivity
+        let last_activity_time = Instant::now() - Duration::from_secs(last_activity.load(Ordering::Relaxed));
+        if last_activity_time.elapsed() > Duration::from_secs(10) {
+            warn!("No activity detected for over 1 minute. Attempting to reconnect...");
+            // Attempt reconnection or other recovery actions here
+            // For demonstration, let's just log and continue. You would replace this with actual reconnection logic.
+            if let Err(e) = reconnect(ws_stream.clone()).await {
+                error!("Failed to reconnect: {:?}", e);
+                continue; // Depending on your strategy, you might choose to retry or take other actions
+            }
+        }
+
+        // Regular heartbeat ping
+        let mut lock = ws_stream.lock().await;
+        match lock.send(Message::Ping(vec![])).await {
+            Ok(_) => info!("Ping message sent successfully."),
+            Err(e) => {
+                error!("Failed to send ping: {:?}", e); // Log errors
+                // Attempt reconnection or exit based on your application's needs
+                if let Err(e) = reconnect(ws_stream.clone()).await {
+                    error!("Reconnection failed: {:?}", e);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+async fn reconnect(ws_stream: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>) -> Result<(), String> {
+    // This should include creating a new WebSocket connection and replacing the old one in `ws_stream`
+    // Returning Ok or Err based on the outcome of the reconnection attempt
+    warn!("Reconnection logic goes here");
+    Err("Reconnection logic not implemented".to_string())
+}
+
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // let wallets = scrape_wallet_addresses().await?; TODO birdeye blocked </3
+    // Setup shared state for last activity tracking
+    let last_activity = Arc::new(AtomicU64::new(Instant::now().elapsed().as_secs()));
+
 
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -100,6 +153,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (mut solana_ws_stream, _) = connect_async(solana_public_ws_url.clone()).await?;
     println!("Connected to Solana WebSocket");
+
+    // let shared_stream = Arc::new(Mutex::new(solana_ws_stream));
+
+    // Share the Arc<Mutex<WebSocketStream>> with the heartbeat task
+    // let heartbeat_stream = shared_stream.clone();
+
 
     //https://solana.com/docs/rpc/websocket/accountsubscribe
     // * api key is provided in the path
@@ -173,10 +232,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let a_magaiba_top_trader = "71WDyyCsZwyEYDV91Qrb212rdg6woCHYQhFnmZUBxiJ6";
     let a_solana_top_trader = "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa";
     let a_solana_top_trader_2 = "DzYV9AFEbe9eGc8GRaNvsGjnt7coYiLDY7omCS1jykJU";
-    let a_solana_top_trader_3 = "JDTCk7yjN8X3X93chPtPyfgqU4MzazCzGmbyftGzp2JX";
 
     //TODO THIS IS USED BELOW TO BUILD TRANSACTION SUMMARIES
-    let currently_tracked_whale = a_solana_top_trader_3.clone();
+    let currently_tracked_whale = a_magaiba_top_trader.clone();
 
     let log_program_ids = vec![
         currently_tracked_whale.clone(),
@@ -201,13 +259,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Subscribing to LOG NOTIFICATIONS on {} with provided messages :: {:?}", solana_private_ws_url.clone(), sub_logs_messages.clone());
     solana_ws_stream.send(Message::Text(sub_logs_messages)).await?;
 
-    //TODO - we should use this pattern when we implement multiple whale tracking
-    let sub_log_params = vec![
-        ("logsSubscribe", vec!["5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1".to_string(), "finalized".to_string()]),
-        // Add more subscriptions .... the solana_subscriber knows how to handle them
-    ];
-    // solana_subscriber.subscribe(&mut solana_ws_stream, &sub_log_params).await?;
-
     // ------------ CHANNEL CREATION ------------
     let (solana_event_sender, mut solana_event_receiver) =
         bounded::<SolanaEventTypes>(5000);
@@ -218,9 +269,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP")
         .expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
+
     let client = Client::new();
 
-    let mut interval = interval(Duration::from_secs(30)); //TODO implement heartbeat to check bot healthz
     // ------------ DESERIALIZED SOLANA EVENT PROCESSING ------------
     let solana_task = tokio::spawn(async move {
         while let Ok(event) = solana_event_receiver.recv() {
@@ -268,22 +319,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     for inner_instruction in inner_instructions {
                                                         for instruction in inner_instruction.instructions {
                                                             if let Ok(transfer_checked) = serde_json::from_value::<TransferChecked>(instruction) {
-                                                                if transfer_checked.parsed.as_ref().map_or(false, |p| p.instruction_type == "transferChecked") {
-                                                                    // Found a TransferChecked instruction
-                                                                    let transfer_info = transfer_checked.parsed.unwrap().info;
-                                                                    // println!("[[TRANSFER CHECKED INFO]] {:?}", transfer_info);
-                                                                    transfer_checked_instructions.push(transfer_info);
+                                                                if let Some(parsed) = transfer_checked.parsed {
+                                                                    if parsed.instruction_type == "transferChecked" {
+                                                                        // Found a TransferChecked instruction
+                                                                        let transfer_info = parsed.info;
+                                                                        // println!("[[TRANSFER CHECKED INFO]] {:?}", transfer_info);
+                                                                        transfer_checked_instructions.push(transfer_info);
+                                                                    }
                                                                 }
                                                             }
                                                         }
                                                     }
 
-                                                     match prepare_transaction_summary(
+                                                     match prepare_transaction_summary_2(
                                                          signature.clone(),
-                                                         currently_tracked_whale.clone().to_string(),
+                                                         currently_tracked_whale.to_string(),
                                                          pre,
-                                                         post,
-                                                         transfer_checked_instructions).await {
+                                                         post).await {
 
                                                          Ok(_) => {
                                                              println!("Successfully processed transaction {:?}", signature.clone());
@@ -325,10 +377,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _ = server::http_server::run_server().await;
 
+    // let do_heartbeats = tokio::spawn( async move {
+    //     heartbeat(heartbeat_stream, last_activity.clone()).await
+    // });
+
     match tokio::try_join!(
         ws_server_task,
         solana_ws_message_processing_task,
-        solana_task
+        solana_task,
+        // do_heartbeats
     ) {
         Ok(_) => println!("All tasks completed successfully"),
         Err(e) => eprintln!("A task exited with an error: {:?}", e),
@@ -436,6 +493,148 @@ async fn prepare_transaction_summary(
     }
 
     Ok(summaries)
+}
+
+
+    async fn prepare_transaction_summary_2(
+        signature: String,
+        tracked_whale: String,
+        pre_token_balances: Vec<TokenBalance>,
+        post_token_balances: Vec<TokenBalance>,
+    ) -> Result<Vec<TxCheckedSummary>, Box<dyn std::error::Error>> {
+        let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP").expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
+        let client = RpcClient::new(solana_private_http_url);
+
+        let balance_changes = aggregate_balance_changes(pre_token_balances.clone(), post_token_balances.clone(), &tracked_whale).await?;
+        // e.g., changes must be greater than or equal to 1.0 tokens (trying to avoid micro transactions for 0.0000....n USDT/USDC/SOL
+        let significance_threshold = 1.0;
+
+        let significant_changes: Vec<&BalanceChange> = balance_changes.iter()
+            .filter(|change| change.change.abs() >= significance_threshold)
+            .collect();
+
+        if significant_changes.is_empty() {
+            // Handle case with no significant changes if necessary
+            return Ok(vec![]);
+        }
+
+        let mut summaries: Vec<TxCheckedSummary> = vec![];
+
+        for change in significant_changes.iter() {
+            let token_name: String;
+            let token_symbol: String;
+
+            // Fetch token metadata
+            match fetch_token_metadata(&client, &change.mint).await {
+                Ok(metadata) => {
+                    token_name = metadata.0;
+                    token_symbol = metadata.1;
+                }
+                Err(e) => {
+                    eprintln!("Error while fetching token metadata: {:?}", e);
+                    token_name = "Unknown".to_string();
+                    token_symbol = "Unknown".to_string();
+                }
+            }
+
+            let transaction_type = if change.change < 0.0 { "Sale" } else { "Purchase" };
+            let description = format!(
+                "{} {} {:.2} {} ({})",
+                tracked_whale,
+                transaction_type,
+                change.change.abs(),
+                token_name,
+                token_symbol
+            );
+
+            let summary = TxCheckedSummary {
+                signature: signature.clone(),
+                transaction_type: transaction_type.to_string(),
+                source: "N/A".to_string(),
+                destination: "N/A".to_string(),
+                mint: change.mint.clone(),
+                token_name,
+                token_symbol,
+                token_amount: Some(change.change.abs()),
+                detail: description,
+            };
+            println!("{}", summary);
+            println!("------------------------------------------------------------");
+            println!("------------------------------------------------------------");
+            summaries.push(summary);
+        }
+
+        Ok(summaries)
+}
+
+async fn fetch_token_metadata(client: &RpcClient, mint: &String) ->  Result<(String, String), Box<dyn std::error::Error>> {
+    let metadata_program_id = &ID;
+    let token_mint_address = Pubkey::from_str(mint.as_str()).unwrap();
+    let (metadata_account_address, _) = Pubkey::find_program_address(
+        &[
+            b"metadata",
+            metadata_program_id.as_ref(),
+            token_mint_address.as_ref(),
+        ],
+        &metadata_program_id,
+    );
+
+
+    let account_data = client.get_account_data(&metadata_account_address)?;
+    let metadata = Metadata::from_bytes(&account_data)
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
+    Ok((metadata.name, metadata.symbol))
+}
+
+// Function to aggregate balance changes between pre and post token balances
+async fn aggregate_balance_changes(
+    pre_balances: Vec<TokenBalance>,
+    post_balances: Vec<TokenBalance>,
+    whale: &str
+) -> Result<Vec<BalanceChange>, Box<dyn std::error::Error>> {
+    let mut changes: Vec<BalanceChange> = Vec::new();
+    let mut pre_map: HashMap<String, f64> = HashMap::new();
+    let mut post_map: HashMap<String, f64> = HashMap::new();
+
+    // Populate the pre-map with pre-transaction balances
+    for balance in pre_balances.into_iter().filter(|b| &b.owner == whale) {
+        pre_map.insert(balance.mint.clone(), balance.ui_token_amount.ui_amount.unwrap_or_default());
+    }
+
+    // Populate the post-map and calculate the change
+    for balance in post_balances.into_iter().filter(|b| &b.owner == whale) {
+        post_map.insert(balance.mint.clone(), balance.ui_token_amount.ui_amount.unwrap_or_default());
+    }
+
+    // Determine the change in balance for each token and categorize as purchase or sale
+    for (mint, post_amount) in post_map.iter() {
+        let pre_amount = pre_map.get(mint).copied().unwrap_or(0.0);
+        let change = post_amount - pre_amount;
+        if change != 0.0 {
+            changes.push(BalanceChange {
+                mint: mint.clone(),
+                change,
+            });
+        }
+    }
+
+    Ok(changes)
+}
+
+
+// Structure to hold changes in token balances
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct BalanceChange {
+    mint: String,
+    change: f64, // Positive for net purchases, negative for net sales.
+}
+
+fn extract_amount(token_balance: &TokenBalance) -> Result<f64, &'static str> {
+    match token_balance.clone().ui_token_amount.ui_amount {
+        Some(amount) => Ok(amount),
+        None => Err("Amount not available"),
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
