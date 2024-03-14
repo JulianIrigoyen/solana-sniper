@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use crossbeam_channel::Sender;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::error::Error as StdError;
 use tokio_tungstenite::tungstenite::Error as WsError;
@@ -19,8 +19,16 @@ pub async fn consume_stream<T: WebsocketEventTypes + Send + 'static>(
     tx: Sender<T>,
 ) {
     while let Some(message) = reconnect_stream.next().await {
-        // println!("Got message message: {:?}", message);
+        println!("Got message message: {:?}", message);
         match message {
+
+            Ok(Message::Ping(ping_payload)) => {
+                println!("Received Ping, replying with Pong.");
+                let pong_response = Message::Pong(ping_payload);
+                if let Err(e) = reconnect_stream.send(pong_response).await {
+                    eprintln!("Failed to send Pong response: {:?}", e);
+                }
+            },
 
             Ok(Message::Text(text)) => {
                 // if text.contains("initialize2") {

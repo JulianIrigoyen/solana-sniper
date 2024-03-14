@@ -198,26 +198,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP").expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
 
     let active_ws_url = solana_public_ws_url.clone();
-
+    println!("CURRENTLY USED WSS PROVIDER: {}", &active_ws_url);
 
     //TODO replace if moving away from stream-reconnect
     // let (mut solana_ws_stream, _) = connect_async(active_ws_url.clone()).await?;
 
+    // ------------ INITIALIZE RECONNECT STREAM ------------
+    let reconnect_options = ReconnectOptions::new()
+        .with_retries_generator(|| {
+            std::iter::repeat_with(|| Duration::from_secs(30))
+        });
+    let mut reconnect_stream: ReconnectStream<SolanaWebSocket, String, Result<Message, WsError>, WsError> =
+        ReconnectStream::connect_with_options(active_ws_url.clone(), reconnect_options).await?;
+
     //https://solana.com/docs/rpc/websocket/accountsubscribe
-    // * api key is provided in the path
-    let solana_subscriber = WebSocketSubscriber::<SolanaSubscriptionBuilder>::new(
-        solana_private_ws_url.to_string(),
-        // solana_public_ws_url.to_string(), //TODO here to switch between private and public RPC URLS
-        None,
-        AuthMethod::None,
-        SolanaSubscriptionBuilder,
-    );
+
+    // --- ACCOUNTS OF INTEREST KEYS --- https://birdeye.so/leaderboard/7D?chain=solana
+    let token_program = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    let raydium_public_key = "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX";
+    let openbook_public_key = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
+    let miglio_whale = "FJRZ5sTp27n6GhUVqgVkY4JGUJPjhRPnWtH4du5UhKbw";
+    let a_whale = "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa";
+    let a_bad_whale = "bobCPc5nqVoX7r8gKzCMPLrKjFidjnSCrAdcYGCH2Ye";
+    let a_magaiba_top_trader = "71WDyyCsZwyEYDV91Qrb212rdg6woCHYQhFnmZUBxiJ6";
+    let a_solana_top_trader = "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa";
+    let a_solana_top_trader_2 = "DzYV9AFEbe9eGc8GRaNvsGjnt7coYiLDY7omCS1jykJU";
+    let a_solana_top_trader_3 = "DCAKxn5PFNN1mBREPWGdk1RXg5aVH9rPErLfBFEi2Emb";
 
     // ------------ PROGRAM SUBSCRIPTION ------------
     let subscription_program_ids = vec![
-        "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", // WIF
-        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK
-        "HJ39rRZ6ys22KdB3USxDgNsL7RKiQmsC3yL8AS3Suuku", // UPDOG
+        a_magaiba_top_trader,
     ];
 
     let mut sub_program_params: Vec<(&str, Vec<String>)> = Vec::new();
@@ -240,20 +250,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // solana_ws_stream.send(Message::Text(sub_accounts_message)).await?;
 
     // ------------ ACCOUNT SUBSCRIPTION ------------
-    let account_program_ids: Vec<String> = vec![
-        ("FJRZ5sTp27n6GhUVqgVkY4JGUJPjhRPnWtH4du5UhKbw".to_string()), //whale de miglio
-        ("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1".to_string()), //raydium
-        ("11111111111111111111111111111111".to_string()),             //system program
-        ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string()),  //token program
+    let account_program_ids = vec![
+        token_program, a_solana_top_trader_3
     ];
 
-    let sub_accounts_message =
-        json!({
+    // println!("Subscribing to ACCOUNT NOTIFICATOINS on  {} with provided messages :: {:?}", solana_private_ws_url.clone(), sub_accounts_message.clone());
+    // solana_ws_stream.send(Message::Text(sub_accounts_message)).await?;
+
+    let mut sub_accounts_messages: Vec<String> = Vec::new();
+    for id in account_program_ids {
+        let message = json!({
               "jsonrpc": "2.0",
               "id": 1,
               "method": "accountSubscribe",
               "params": [
-                "FJRZ5sTp27n6GhUVqgVkY4JGUJPjhRPnWtH4du5UhKbw",
+                id,
                 {
                   "encoding": "jsonParsed",
                   "commitment": "finalized"
@@ -261,21 +272,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
               ]
             }).to_string();
 
-    // println!("Subscribing to ACCOUNT NOTIFICATOINS on  {} with provided messages :: {:?}", solana_private_ws_url.clone(), sub_accounts_message.clone());
-    // solana_ws_stream.send(Message::Text(sub_accounts_message)).await?;
-
+        sub_accounts_messages.push(message);
+    }
+    println!("Subscribing to ACCOUNT NOTIFICATOINS on  {} with provided messages :: {:?}", active_ws_url.clone(), sub_accounts_messages.clone());
+    for message in sub_accounts_messages {
+        reconnect_stream.send(Message::Text(message)).await?;
+    }
     // ------------ LOG SUBSCRIPTION ------------
-    let raydium_public_key = "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX";
-    let openbook_public_key = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
-
-    // --- WHALE KEYS --- https://birdeye.so/leaderboard/7D?chain=solana
-    let miglio_whale = "FJRZ5sTp27n6GhUVqgVkY4JGUJPjhRPnWtH4du5UhKbw";
-    let a_whale = "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa";
-    let a_bad_whale = "bobCPc5nqVoX7r8gKzCMPLrKjFidjnSCrAdcYGCH2Ye";
-    let a_magaiba_top_trader = "71WDyyCsZwyEYDV91Qrb212rdg6woCHYQhFnmZUBxiJ6";
-    let a_solana_top_trader = "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa";
-    let a_solana_top_trader_2 = "DzYV9AFEbe9eGc8GRaNvsGjnt7coYiLDY7omCS1jykJU";
-
     //TODO THIS IS USED BELOW TO BUILD TRANSACTION SUMMARIES
     let currently_tracked_whale = a_magaiba_top_trader.clone();
 
@@ -300,12 +303,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }).to_string();
 
     println!("Subscribing to LOG NOTIFICATIONS on {} with provided messages :: {:?}", active_ws_url.clone(), sub_logs_message.clone());
-    let reconnect_options = ReconnectOptions::new()
-        .with_retries_generator(|| {
-            std::iter::repeat_with(|| Duration::from_secs(5))
-        });
-    let mut reconnect_stream: ReconnectStream<SolanaWebSocket, String, Result<Message, WsError>, WsError> =
-        ReconnectStream::connect_with_options(active_ws_url.clone(), reconnect_options).await?;
 
     // solana_ws_stream.send(Message::Text(sub_logs_message)).await?;
     reconnect_stream.send(Message::Text(sub_logs_message)).await?;
