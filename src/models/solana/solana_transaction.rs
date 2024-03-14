@@ -51,12 +51,22 @@ pub struct TxCheckedSummary {
     pub token_name: String,
     pub token_symbol: String,
     pub token_amount: Option<f64>, // use uiAmount ->  field that presents the amount in a format that's ready for display, taking into account the decimals. It represents the amount of tokens being transferred as a floating-point number.
+    pub token_price: Option<f64>,
+    pub transaction_usd_value: Option<f64>,
+    pub price_change_24_h: Option<f64>,
+    pub liquidity: Option<f64>,
     pub detail: String, // use uiAmount ->  field that presents the amount in a format that's ready for display, taking into account the decimals. It represents the amount of tokens being transferred as a floating-point number.
 }
 
 
 impl fmt::Display for TxCheckedSummary {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let solscan_link = format!("https://solscan.io/tx/{}", self.signature);
+        let token_amount = if self.token_amount.is_some() { self.token_amount.unwrap() } else { 0.0 };
+        let token_price = if self.token_price.is_some() { self.token_price.unwrap() } else { 0.0 };
+        let price_change_24_h = if self.price_change_24_h.is_some() { self.price_change_24_h.unwrap() } else { 0.0 };
+        let liquidity = if self.liquidity.is_some() { self.liquidity.unwrap() } else { 0.0 };
+        let transaction_value = token_price * token_amount;
         write!(f, "Transaction Checked - {} - Summary:\n\
                 Transaction Type: {}\n\
                 Source: {}\n\
@@ -65,7 +75,12 @@ impl fmt::Display for TxCheckedSummary {
                 Token Name: {}\n\
                 Token Symbol: {}\n\
                 Token Amount: {}\n\
-                Detail: {}",
+                Token Price: {}\n\
+                Transaction Value (USD): {}\n\
+                Price Change (24h): {}\n\
+                Liquidity: {}\n\
+                Detail: {}\n\
+                Link: {}",
                self.signature,
                self.transaction_type,
                self.source,
@@ -73,8 +88,13 @@ impl fmt::Display for TxCheckedSummary {
                self.mint,
                self.token_name,
                self.token_symbol,
-               if self.token_amount.is_some() { self.token_amount.unwrap() } else { 0.0 },
-               self.detail
+               token_amount,
+               token_price,
+               transaction_value,
+               price_change_24_h,
+               liquidity,
+               self.detail,
+               solscan_link
         )
     }
 }
