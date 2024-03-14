@@ -6,32 +6,32 @@ use std::error::Error;
 use actix_web::{HttpResponse, Responder, web};
 
 // https://docs.birdeye.so/reference/post_defi-multi-price
-#[derive(Debug, Serialize, Deserialize)]
-struct MultiPriceRequest {
-    list_address: String, // comma separated addresses
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MultiPriceRequest {
+    pub(crate) list_address: String, // comma separated addresses
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct MultiPriceResponse {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MultiPriceResponse {
     data: HashMap<String, TokenData>, //signature - data
     success: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct TokenDataWithId {
-    program_id: String,
-    value: f64,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TokenDataWithId {
+    pub(crate) program_id: String,
+    pub value: f64,
     #[serde(rename = "updateUnixTime")]
-    update_unix_time: f64,
+    pub update_unix_time: f64,
     #[serde(rename = "updateHumanTime")]
-    update_human_time: String,
+    pub update_human_time: String,
     #[serde(rename = "priceChange24h")]
-    price_change_24_h: f64,
-    liquidity: f64,
+    pub price_change_24_h: f64,
+    pub liquidity: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct TokenData {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TokenData {
     value: f64,
     #[serde(rename = "updateUnixTime")]
     update_unix_time: f64,

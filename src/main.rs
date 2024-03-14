@@ -55,8 +55,17 @@ use crate::trackers::raydium::new_token_tracker;
 use crate::trackers::raydium::new_token_tracker::NewTokenTracker;
 
 use actix::prelude::*;
+use actix_web::web;
 use mpl_token_metadata::accounts::Metadata;
 use mpl_token_metadata::ID;
+
+// retry impl
+use tokio_tungstenite::{tungstenite::Error as WsError, };
+
+use stream_reconnect::{UnderlyingStream, ReconnectStream};
+use std::future::Future;
+use std::pin::Pin;
+
 
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
@@ -65,6 +74,7 @@ use tokio::time::interval;
 use crate::models::solana::solana_account_notification::SolanaAccountNotification;
 use crate::models::solana::solana_transaction::{TransactionSummary, TxCheckedSummary};
 use crate::scraper::birdeye_scraper::scrape_wallet_addresses;
+use crate::server::endpoints::birdeye::token_prices::{fetch_multi_token_prices, MultiPriceRequest};
 
 mod db;
 mod util;
@@ -77,8 +87,36 @@ mod subscriber;
 mod decoder;
 mod scraper;
 
-
 /** Welcome to the Solana Sniper */
+//
+//
+// struct SolanaWs;
+//
+// impl UnderlyingStream<String, Result<Message, WsError>, WsError> for SolanaWs {
+//     type Stream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+//
+//     fn establish(addr: String) -> Pin<Box<dyn Future<Output = Result<Self::Stream, WsError>> + Send>> {
+//         Box::pin(async move {
+//             let (ws_stream, _) = connect_async(&addr).await.map_err(|e| WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+//             Ok(ws_stream)
+//         })
+//     }
+//
+//     fn is_write_disconnect_error(err: &WsError) -> bool {
+//         matches!(err, WsError::ConnectionClosed | WsError::AlreadyClosed | WsError::Io(_) | WsError::Tls(_) | WsError::Protocol(_))
+//     }
+//
+//     fn is_read_disconnect_error(item: &Result<Message, WsError>) -> bool {
+//         matches!(item, Err(WsError::ConnectionClosed | WsError::AlreadyClosed | WsError::Io(_) | WsError::Tls(_) | WsError::Protocol(_)))
+//     }
+//
+//     fn exhaust_err() -> WsError {
+//         WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Exhausted"))
+//     }
+// }
+//
+// type ReconnectSolanaWs = ReconnectStream<SolanaWs, String, Result<Message, WsError>, WsError>;
+
 
 async fn heartbeat(
     ws_stream: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>,
@@ -153,7 +191,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let solana_private_ws_url   = env::var("PRIVATE_SOLANA_QUICKNODE_WS").expect("PRIVATE_SOLANA_QUICKNODE_WS must be set");
     let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP").expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
 
-    let (mut solana_ws_stream, _) = connect_async(solana_public_ws_url.clone()).await?;
+    let active_ws_url = solana_public_ws_url.clone();
+
+    let (mut solana_ws_stream, _) = connect_async(active_ws_url.clone()).await?;
     println!("Connected to Solana WebSocket");
 
     // let shared_stream = Arc::new(Mutex::new(solana_ws_stream));
@@ -260,7 +300,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ]
                     }).to_string();
 
-    println!("Subscribing to LOG NOTIFICATIONS on {} with provided messages :: {:?}", solana_private_ws_url.clone(), sub_logs_messages.clone());
+    println!("Subscribing to LOG NOTIFICATIONS on {} with provided messages :: {:?}", active_ws_url.clone(), sub_logs_messages.clone());
     solana_ws_stream.send(Message::Text(sub_logs_messages)).await?;
     // ------------ CHANNEL CREATION ------------
     let (solana_event_sender, mut solana_event_receiver) =
@@ -374,7 +414,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("[[SOLANA TASK]] GOT ACCOUNT NOTIFICATION {:?}", signature)
                 }
                 _ => {
-                    println!("Stand by")
+                    println!("Stand by");
+                    continue;
                 }
             }
         }
@@ -455,7 +496,17 @@ async fn prepare_transaction_summary_2(
             token_symbol
         );
 
-        let summary = TxCheckedSummary {
+        // fetch token prices
+        let list_address: String = significant_changes.iter()
+            .map(|change| change.mint.clone())
+            .collect::<Vec<String>>().join(",");
+
+        let price_request = web::Json(MultiPriceRequest { list_address });
+
+
+        let token_prices = fetch_multi_token_prices(price_request).await?;
+
+        let mut summary = TxCheckedSummary {
             signature: signature.clone(),
             transaction_type: transaction_type.to_string(),
             source: "N/A".to_string(),
@@ -464,8 +515,19 @@ async fn prepare_transaction_summary_2(
             token_name,
             token_symbol,
             token_amount: Some(change.change.abs()),
+            token_price: None,
+            transaction_usd_value: None,
+            price_change_24_h: None,
+            liquidity: None,
             detail: description,
         };
+        if let Some(token_data) = token_prices.iter().find(|data| data.program_id == change.mint) {
+            // Update the summary object with the price and liquidity
+            summary.token_price = Some(token_data.clone().value);
+            summary.liquidity = Some(token_data.clone().liquidity);
+            summary.price_change_24_h = Some(token_data.clone().price_change_24_h);
+        }
+
         println!("{}", summary);
         println!("------------------------------------------------------------");
         println!("------------------------------------------------------------");
@@ -681,6 +743,8 @@ pub struct InstructionData {
     data: String,
     program_id_index: Option<u8>,
 }
+
+/*
 async fn prepare_transaction_summary(
     signature: String,
     tracked_whale: String,
@@ -780,3 +844,4 @@ async fn prepare_transaction_summary(
 
     Ok(summaries)
 }
+*/
