@@ -167,3 +167,13 @@ impl SubscriptionBuilder for SolanaSubscriptionBuilder {
     }
 }
 
+
+/*
+// * api key is provided in the path
+let solana_subscriber = WebSocketSubscriber::<SolanaSubscriptionBuilder>::new(
+solana_private_ws_url.to_string(),
+// solana_public_ws_url.to_string(), //TODO here to switch between private and public RPC URLS
+None,
+AuthMethod::None,
+SolanaSubscriptionBuilder,
+);*/
