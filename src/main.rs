@@ -16,14 +16,20 @@ extern crate timely;
 use borsh::BorshDeserialize;
 use std::{env, thread};
 use std::collections::HashMap;
-use std::error::Error;
 use std::str::FromStr;
-use std::task::Context;
 use std::time::Duration;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::io;
+
+use std::error::Error as StdError;
+
 
 use crossbeam_channel::{bounded, Sender};
+
 use dotenv::dotenv;
-use futures_util::{sink::SinkExt, stream::StreamExt};
+
 use reqwest::Client as Client;
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
@@ -31,25 +37,29 @@ use timely::dataflow::InputHandle;
 use timely::dataflow::operators::{Filter, Input, Inspect};
 use timely::execute_from_args;
 use timely::worker::Worker;
-use tokio::sync::Mutex;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::net::TcpStream;
+
 use tokio::time::{interval as tokio_interval, Duration as TokioDuration, Instant};
-use tokio_tungstenite::{
-    connect_async, MaybeTlsStream, tungstenite::protocol::Message, WebSocketStream,
-};
+use tokio::net::TcpStream;
+use tokio_tungstenite::{connect_async, WebSocketStream};
+use tokio_tungstenite::tungstenite::{Error as WsError, Message};
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+use tokio_tungstenite::MaybeTlsStream;
+use tokio::sync::Mutex;
+
+use futures_util::stream::{Stream, StreamExt};
+use futures_util::{future, pin_mut, SinkExt};
+use futures::task::{Context, Poll};
+use futures::Future;
 
 use log::{info, warn, error};
-
 use url::Url;
-use crate::db::db_session_manager::DbSessionManager;
 
+use crate::db::db_session_manager::DbSessionManager;
 use crate::models::solana::solana_event_types::SolanaEventTypes;
 use crate::models::solana::alchemy::get_program_accounts::ProgramAccountsResponse;
 use crate::server::ws_server;
 use crate::subscriber::websocket_subscriber::{WebSocketSubscriber, AuthMethod, SolanaSubscriptionBuilder};
-
 use crate::subscriber::consume_stream::{consume_stream};
 use crate::trackers::raydium::new_token_tracker;
 use crate::trackers::raydium::new_token_tracker::NewTokenTracker;
@@ -60,12 +70,7 @@ use mpl_token_metadata::accounts::Metadata;
 use mpl_token_metadata::ID;
 
 // retry impl
-use tokio_tungstenite::{tungstenite::Error as WsError, };
-
-use stream_reconnect::{UnderlyingStream, ReconnectStream};
-use std::future::Future;
-use std::pin::Pin;
-
+use stream_reconnect::{UnderlyingStream, ReconnectStream, ReconnectOptions};
 
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
@@ -88,81 +93,82 @@ mod decoder;
 mod scraper;
 
 /** Welcome to the Solana Sniper */
-//
-//
-// struct SolanaWs;
-//
-// impl UnderlyingStream<String, Result<Message, WsError>, WsError> for SolanaWs {
-//     type Stream = WebSocketStream<MaybeTlsStream<TcpStream>>;
-//
-//     fn establish(addr: String) -> Pin<Box<dyn Future<Output = Result<Self::Stream, WsError>> + Send>> {
-//         Box::pin(async move {
-//             let (ws_stream, _) = connect_async(&addr).await.map_err(|e| WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-//             Ok(ws_stream)
-//         })
-//     }
-//
-//     fn is_write_disconnect_error(err: &WsError) -> bool {
-//         matches!(err, WsError::ConnectionClosed | WsError::AlreadyClosed | WsError::Io(_) | WsError::Tls(_) | WsError::Protocol(_))
-//     }
-//
-//     fn is_read_disconnect_error(item: &Result<Message, WsError>) -> bool {
-//         matches!(item, Err(WsError::ConnectionClosed | WsError::AlreadyClosed | WsError::Io(_) | WsError::Tls(_) | WsError::Protocol(_)))
-//     }
-//
-//     fn exhaust_err() -> WsError {
-//         WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Exhausted"))
-//     }
-// }
-//
-// type ReconnectSolanaWs = ReconnectStream<SolanaWs, String, Result<Message, WsError>, WsError>;
 
+/// Custom Implementation of SolanaReconnectStream - https://lib.rs/crates/stream-reconnect
+pub struct SolanaWebSocket(WebSocketStream<MaybeTlsStream<TcpStream>>);
 
-async fn heartbeat(
-    ws_stream: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>,
-    last_activity: Arc<AtomicU64>,
-) {
-    let mut interval = time::interval(Duration::from_secs(5));
-    loop {
-        info!("[[HEARTBEAT]] <3  <3  <3  <3  <3  <3  <3  <3  <3  <3  <3  <3  <3 ");
-        interval.tick().await;
-        // Check for inactivity
-        let last_activity_time = Instant::now() - Duration::from_secs(last_activity.load(Ordering::Relaxed));
-        if last_activity_time.elapsed() > Duration::from_secs(10) {
-            warn!("No activity detected for over 1 minute. Attempting to reconnect...");
-            // Attempt reconnection or other recovery actions here
-            // For demonstration, let's just log and continue. You would replace this with actual reconnection logic.
-            if let Err(e) = reconnect(ws_stream.clone()).await {
-                error!("Failed to reconnect: {:?}", e);
-                continue; // Depending on your strategy, you might choose to retry or take other actions
+impl UnderlyingStream<String, Result<Message, WsError>, WsError> for SolanaWebSocket {
+    // Establishes connection.
+    // Additionally, this will be used when reconnect tries are attempted.
+    fn establish(addr: String) -> Pin<Box<dyn Future<Output = Result<Self, WsError>> + Send>> {
+        Box::pin(async move {
+            match connect_async(&addr).await {
+                Ok((stream, _)) => Ok(SolanaWebSocket(stream)),
+                Err(e) => Err(e),
             }
-        }
+        })
+    }
 
-        // Regular heartbeat ping
-        let mut lock = ws_stream.lock().await;
-        match lock.send(Message::Ping(vec![])).await {
-            Ok(_) => info!("Ping message sent successfully."),
-            Err(e) => {
-                error!("Failed to send ping: {:?}", e); // Log errors
-                // Attempt reconnection or exit based on your application's needs
-                if let Err(e) = reconnect(ws_stream.clone()).await {
-                    error!("Reconnection failed: {:?}", e);
-                    break;
-                }
-            }
+    // The following errors are considered disconnect errors.
+    fn is_write_disconnect_error(&self, err: &WsError) -> bool {
+        matches!(
+                err,
+                WsError::ConnectionClosed
+                    | WsError::AlreadyClosed
+                    | WsError::Io(_)
+                    | WsError::Tls(_)
+                    | WsError::Protocol(_)
+            )
+    }
+
+    // If an `Err` is read, then there might be an disconnection.
+    fn is_read_disconnect_error(&self, item: &Result<Message, WsError>) -> bool {
+        if let Err(e) = item {
+            Self::is_write_disconnect_error(&self, e)
+        } else {
+            false
         }
+    }
+
+    // Return "Exhausted" if all retry attempts are failed.
+    fn exhaust_err() -> WsError {
+        WsError::Io(io::Error::new(io::ErrorKind::Other, "Exhausted"))
     }
 }
 
-async fn reconnect(ws_stream: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>) -> Result<(), Box<dyn Error>> {
-    // Logic to create a new WebSocket connection
-    let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP").expect("PRIVATE_SOLANA_QUICKNODE_HTTP must be set");
-    let (new_ws_stream, _) = connect_async(solana_private_http_url).await?;
-    let mut lock = ws_stream.lock().await;
-    *lock = new_ws_stream;
-    Ok(())
+type ReconnectWs = ReconnectStream<SolanaWebSocket, String, Result<Message, WsError>, WsError>;
+
+impl Stream for SolanaWebSocket {
+    type Item = Result<Message, WsError>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        Pin::new(&mut this.0).poll_next(cx)
+    }
 }
 
+use futures::Sink;
+
+impl Sink<Message> for SolanaWebSocket {
+    type Error = WsError;
+
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.0).poll_ready(cx)
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+        Pin::new(&mut self.0).start_send(item)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.0).poll_close(cx)
+    }
+
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -193,16 +199,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let active_ws_url = solana_public_ws_url.clone();
 
-    let (mut solana_ws_stream, _) = connect_async(active_ws_url.clone()).await?;
-    println!("Connected to Solana WebSocket");
 
-    // let shared_stream = Arc::new(Mutex::new(solana_ws_stream));
-    // Share the Arc<Mutex<WebSocketStream>> with the heartbeat task
-    // let heartbeat_stream = shared_stream.clone();
-    // // Share the Arc<Mutex<WebSocketStream>> with the heartbeat task
-    // let heartbeat_stream = shared_stream.clone();
-    // let stream_for_consuming = shared_stream.clone();
-
+    //TODO replace if moving away from stream-reconnect
+    // let (mut solana_ws_stream, _) = connect_async(active_ws_url.clone()).await?;
 
     //https://solana.com/docs/rpc/websocket/accountsubscribe
     // * api key is provided in the path
@@ -284,7 +283,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         currently_tracked_whale.clone(),
     ];
 
-    let sub_logs_messages =
+    let sub_logs_message =
         json!({
                         "jsonrpc": "2.0",
                         "id": 1,
@@ -300,8 +299,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ]
                     }).to_string();
 
-    println!("Subscribing to LOG NOTIFICATIONS on {} with provided messages :: {:?}", active_ws_url.clone(), sub_logs_messages.clone());
-    solana_ws_stream.send(Message::Text(sub_logs_messages)).await?;
+    println!("Subscribing to LOG NOTIFICATIONS on {} with provided messages :: {:?}", active_ws_url.clone(), sub_logs_message.clone());
+    let reconnect_options = ReconnectOptions::new()
+        .with_retries_generator(|| {
+            std::iter::repeat_with(|| Duration::from_secs(5))
+        });
+    let mut reconnect_stream: ReconnectStream<SolanaWebSocket, String, Result<Message, WsError>, WsError> =
+        ReconnectStream::connect_with_options(active_ws_url.clone(), reconnect_options).await?;
+
+    // solana_ws_stream.send(Message::Text(sub_logs_message)).await?;
+    reconnect_stream.send(Message::Text(sub_logs_message)).await?;
+
+
     // ------------ CHANNEL CREATION ------------
     let (solana_event_sender, mut solana_event_receiver) =
         bounded::<SolanaEventTypes>(5000);
@@ -309,7 +318,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sender_clone = solana_event_sender.clone();
 
     let solana_ws_message_processing_task = tokio::spawn(async move {
-        consume_stream::<SolanaEventTypes>(&mut solana_ws_stream, sender_clone).await;
+        consume_stream::<SolanaEventTypes>(&mut reconnect_stream, solana_event_sender).await;
     });
 
     let solana_private_http_url = env::var("PRIVATE_SOLANA_QUICKNODE_HTTP")

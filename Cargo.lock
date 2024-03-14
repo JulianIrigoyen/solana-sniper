@@ -4890,6 +4890,7 @@ dependencies = [
  "dotenv_codegen",
  "eyre",
  "fantoccini",
+ "futures",
  "futures-util",
  "hashbrown 0.14.3",
  "lazy_static",
