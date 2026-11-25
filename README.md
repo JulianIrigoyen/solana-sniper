@@ -1,119 +1,44 @@
-# The lips of wisdom are closed, except to the ears of Understanding
+# solana-sniper
 
-** this is a fork of rust-websocket-server
+solana-sniper is a Rust tool that watches the Solana chain over a websocket and summarizes what tracked wallets do. It also serves a small HTTP API for token holders, whales, and transactions. The code is a proof of concept from March 2024. It is a fork of an earlier `rust-websocket-server`.
 
-[RTFM](https://solana.com/es/docs/rpc) <3
+## Stack
 
-"Me cabe la de disparar, pero hay que apuntar un poquito..." - Emiliano Migliorata
+- Rust 2021, tokio
+- tokio-tungstenite for the Solana websocket, reqwest for JSON-RPC calls
+- actix-web for the HTTP API
+- diesel and PostgreSQL (the schema is a leftover from the Polygon.io server this started from; the tracker does not write to it yet)
+- A Solana RPC provider (the code reads QuickNode URLs from the environment) and the Moralis and Birdeye HTTP APIs
 
-## Features: 
+## How it works
 
-1. Analyzes holders and token distribution for a given SPL address. Follow this example to basically do anything you want.
-2. Track new tokens =>
-   1. Subscribes to logs mentioning Raydium (more to come) and filter initialize2 events.
-   2. Grabs the signature and fetch the transaction to find the main token address.
-   3. Fetches new token metadata
-   
-3. Track wallets => working! Checkout l179 of main. Input your wallet and start tracking (must run the project!
-   1. Subscribes to the logs of the whale (l166)
-   2. Receive transaction signatures after consuming and parsing websocket events.
-   3. Fetches the transaction
-   4. Parses transaction instructions (for now, only supports TransferChecked instructions) and pre/post token balances
-   5. Outputs summary -> TODO: TELEGRAM BOT HERE
+1. `main.rs` opens a websocket to the Solana RPC and sends a `logsSubscribe` request for one tracked wallet.
+2. `subscriber/consume_stream.rs` parses each message into a `SolanaEventTypes` value and puts it on a bounded channel.
+3. A task reads the channel. For each successful log it calls `getTransaction` over HTTP with the signature.
+4. `decoder/tx_decoder.rs` parses the instructions (`TransferChecked` only) and the pre and post token balances. It prints a transaction summary.
+5. `server/http_server.rs` serves a JSON API on `127.0.0.1:8080` under `/api`: `holders`, `whales`, `transactions`, `accounts`, `signatures_for_address`, and Birdeye token prices.
 
-4. WIP: Smart Whale tracking
-   1. Manually input [10 wallets](https://birdeye.so/leaderboard/7D?chain=solana)
-   2. Track wallet transactions in 5/10 minute intervals.
-   3. Persist a report for the given interval with Transaction Summaries
-   4. Feed the summaries of each wallet to GPT to create a whale overall summary for the given interval
-   5. Feed the each whale's summary of summaries to GPT to create an overal 10 minut summary.
-   6. Persist, train, repeat, test, DBAB
+The `holders` endpoint takes a list of token mints and returns the largest holders and their share of supply. The `whales` endpoint writes CSV reports. Example reports from March 2024 are in `data/`.
 
+## Data files
 
+`public/birdeye/amm_providers.json` holds public AMM program addresses from Birdeye. They are not secrets. Secret scanners flag them because they look like keys. The wallet addresses in `main.rs` and `data/` are public chain addresses.
 
-## Nice to have:
+## Run it
 
-### Technical Indicators
+You need Rust, PostgreSQL, and the diesel CLI.
 
-- You receive alerts when there are some buy/sell signals following professional technical indicators. Recommended for professional users.
-(Example: "EMA of SOL/USD 1h cross up 70”)
+1. Create a `.env` file with `DATABASE_URL`, `WS_SERVER_HOST`, `WS_SERVER_PORT`, `PRIVATE_SOLANA_QUICKNODE_WS`, and `PRIVATE_SOLANA_QUICKNODE_HTTP`. Some endpoints also need Moralis and Birdeye keys.
+2. Run `./run-migrations.sh`. Edit the user and the password in the script first. The committed password is `REDACTED`.
+3. Run `cargo run`.
+4. Test the API:
 
-### Token Stats Performance
-
-- You receive alerts when token(s) changes its non-price parameters such as volume, number of trades, ect. in a certain time frames.
-(Example: "SOL Price Change % in 1h is greater than 30%”)
-
-### Trading Events
-
-- You receive alerts when specific actions happened, such as large buys, large sells or any trades by a wallet.
-(Example: "Wallet HhfmVzo...NxAFFKbWU2h (Solana) has a trade with value greater than $100k at Jupiter”)
-
-Market Movements
-
-You receive notifications following market events such as new trending tokens or new tokens listed.
-(Example: "SOL gets into Top10 Trending list")
-
-
-
-
-### Run
-
-You will need to install [Rust](https://doc.rust-lang.org/book/ch01-01-installation.html) and [Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html).
-Pull the repo, cd into it and run: 
-
-1. `cargo build`
-2. `cargo run`
-
-This app uses Actix to expose an HTTP server, which you can test by making a request to `http://localhost:8080/api/holders` with the following body: 
-```json
-{
-    "token_mint_addresses":["DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"] 
-}
+```
+curl -X POST http://localhost:8080/api/holders \
+  -H 'content-type: application/json' \
+  -d '{"token_mint_addresses":["DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"]}'
 ```
 
-##### Endpoints
-The list below summarizes the available endpoints through RPC aganst a public or private solana validator node:
+## Status
 
-1. **getLatestBlockhash**
-   Purpose: Fetches the latest block hash along with its validity period. Essential for ensuring transactions are recent and will be accepted by the network.
-2. **getProgramAccounts**
-   Purpose: Retrieves all accounts owned by a specific program, useful for monitoring smart contracts, especially DeFi protocols, and NFT collections.
-3. **getSignaturesForAddress**
-   Purpose: Returns the signatures of transactions that involve a specific account. This is crucial for tracking transactions related to specific tokens or wallets, providing insights into market activity.
-4. **getTransaction**
-   Purpose: Fetches a confirmed transaction by its signature. Vital for analyzing transaction details, including participants, token amounts, and more.
-5. **getAccountInfo**
-   Purpose: Retrieves information about a specific account, including its current balance and owner program. This can be used to monitor the balances of key accounts, such as token treasuries or large holders.
-6. **getTokenAccountBalance**
-   Purpose: Returns the token balance of a specific SPL token account. It's useful for tracking the distribution and concentration of tokens among holders.
-7. **getTokenAccountsByOwner**
-   Purpose: Finds all SPL token accounts owned by a specific account. This is useful for identifying all the tokens held by a particular investor or contract.
-8. **getTokenSupply**
-   Purpose: Provides the total supply of an SPL token. Monitoring changes in token supply can offer insights into inflationary or deflationary pressures on a token's value.
-9. **getSlot**
-   Purpose: Retrieves the current slot, which is a measure of time in the Solana blockchain. It's useful for understanding the blockchain's state and the timing of transactions.
-10. **getSlotLeader**
-    Purpose: Identifies the current slot leader, which is the validator node responsible for producing blocks in the current slot. This can provide insights into network dynamics and validator performance.
-
-## Use Case
-
-### Identifying and Monitoring Top Traders
-- Use getSignaturesForAddress and getTransaction to track the activities of known wallets associated with top traders. 
-### Token Holder Analysis for Decentralization and Whale Tracking
-
-#### WebSocket Data:
-
-1. [accountSubscribe](https://solana.com/es/docs/rpc/websocket/logssubscribe): Monitor changes to specific accounts in real-time, such as token balances changing.
-2. [logsSubscribe](https://solana.com/es/docs/rpc/websocket/logssubscribe): Get real-time streaming of transaction logs, useful for live monitoring of contract interactions.
-3. [signatureSubscribe](https://solana.com/es/docs/rpc/websocket/signaturesubscribe): Subscribe to receive a notification when the transaction with the given signature reaches the specified commitment level.
-4. [blockSubscribe](https://solana.com/es/docs/rpc/websocket/blocksubscribe): Subscribe to receive notification anytime a new block is confirmed or finalized.
-5. [programSubscribe](https://solana.com/es/docs/rpc/websocket/programsubscribe): Subscribe to a program to receive notifications when the lamports or data for an account owned by the given program changes
-
-
-
-
-
-
-
-
-
+Proof of concept, 5 to 13 March 2024. 30 commits. Not maintained. The wallet to track is hardcoded in `main.rs`. Telegram alerts and the GPT summaries listed in the roadmap are not built. This is not a trading bot: it never places orders.
